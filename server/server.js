@@ -6,7 +6,7 @@ const { WebSocketServer } = require('ws');
 const http = require('http');
 const { createGameState, ...actions } = require('./gameEngine');
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Metro Magnate Game Server');
