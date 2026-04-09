@@ -51,6 +51,8 @@ export default function App() {
   const [modal, setModal] = useState(null);
   const [myName, setMyName] = useState('');
   const [myToken, setMyToken] = useState(TOKENS[0]);
+  const [shareLink, setShareLink] = useState('');
+  const [isRolling, setIsRolling] = useState(false);
 
   // socket listeners
   useEffect(() => {
@@ -58,6 +60,8 @@ export default function App() {
       setMyId(msg.playerId);
       setRoomCode(msg.code);
       setIsHost(true);
+      const link = `${window.location.origin}?join=${msg.code}`;
+      setShareLink(link);
       setScreen(SCREENS.LOBBY);
     });
     on('joined', (msg) => {
@@ -72,11 +76,24 @@ export default function App() {
     on('state', (msg) => {
       setGameState(msg.state);
       setServerPlayers(msg.players);
+      setShareLink('');
       if (msg.state.winner) setScreen(SCREENS.WIN);
       else setScreen(SCREENS.GAME);
     });
     on('error', (msg) => {
-      showToast(msg.msg, 'error');
+      if (msg.msg === 'duplicate_emoji') {
+        setModal(
+          <div className="confirm-modal">
+            <h3>🎭 Emoji Already Taken</h3>
+            <p>Another player is using {msg.playerToken}. Please choose a different emoji.</p>
+            <div className="bm-btns">
+              <button className="btn-primary" onClick={() => setModal(null)}>Change Emoji</button>
+            </div>
+          </div>
+        );
+      } else {
+        showToast(msg.msg, 'error');
+      }
     });
     on('player_disconnected', (msg) => {
       showToast(`${msg.name} disconnected`, 'warn');
@@ -132,7 +149,7 @@ export default function App() {
         <LobbyScreen
           code={roomCode} players={lobbyPlayers}
           isHost={isHost} onStart={startGame}
-          myId={myId}
+          myId={myId} shareLink={shareLink}
         />
       )}
       {screen === SCREENS.GAME && gameState && (
@@ -142,6 +159,7 @@ export default function App() {
           isMyTurn={isMyTurn}
           dispatch={dispatch}
           modal={modal} setModal={setModal}
+          isRolling={isRolling} setIsRolling={setIsRolling}
         />
       )}
       {screen === SCREENS.WIN && gameState && (
@@ -246,13 +264,20 @@ function HomeScreen({ myName, setMyName, myToken, setMyToken, connected, error, 
 // ═══════════════════════════════════════════════
 // LOBBY SCREEN
 // ═══════════════════════════════════════════════
-function LobbyScreen({ code, players, isHost, onStart, myId }) {
+function LobbyScreen({ code, players, isHost, onStart, myId, shareLink }) {
   const [copied, setCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   function copyCode() {
     navigator.clipboard?.writeText(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  function copyLink() {
+    navigator.clipboard?.writeText(shareLink);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
   }
 
   return (
@@ -264,6 +289,13 @@ function LobbyScreen({ code, players, isHost, onStart, myId }) {
           <span className="code-value">{code}</span>
           <span className="code-copy">{copied ? '✓' : '⎘'}</span>
         </div>
+        {shareLink && (
+          <div className="share-link-display" onClick={copyLink}>
+            <span className="link-label">SHARE LINK</span>
+            <span className="link-value">{shareLink.substring(0, 40)}...</span>
+            <span className="link-copy">{linkCopied ? '✓' : '⎘'}</span>
+          </div>
+        )}
         <p className="lobby-hint">Share this code with friends on the same network or anywhere!</p>
       </div>
 
@@ -307,7 +339,7 @@ function LobbyScreen({ code, players, isHost, onStart, myId }) {
 // ═══════════════════════════════════════════════
 // GAME SCREEN
 // ═══════════════════════════════════════════════
-function GameScreen({ state, serverPlayers, myId, myPlayer, isMyTurn, dispatch, modal, setModal }) {
+function GameScreen({ state, serverPlayers, myId, myPlayer, isMyTurn, dispatch, modal, setModal, isRolling, setIsRolling }) {
   const [activeTab, setActiveTab] = useState('board'); // board | props | log
   const currentP = state.players[state.currentIdx];
   const isMe = currentP?.id === myId;
@@ -324,8 +356,7 @@ function GameScreen({ state, serverPlayers, myId, myPlayer, isMyTurn, dispatch, 
           </div>
         </div>
         <div className="dice-area">
-          <span className="die">{state.dice[0]}</span>
-          <span className="die">{state.dice[1]}</span>
+          <span className={`die ${isRolling ? 'rolling' : ''}`}>{state.dice[0]}</span>
         </div>
       </div>
 
@@ -413,6 +444,38 @@ function phaseLabel(state, isMe) {
 
 // ─── MOBILE BOARD ───────────────────────────────
 function MobileBoard({ state, myId, dispatch, setModal }) {
+  const [animatingPawns, setAnimatingPawns] = useState(new Set());
+  const prevStateRef = useRef(null);
+
+  // Detect movement and trigger animations
+  useEffect(() => {
+    if (!prevStateRef.current) {
+      prevStateRef.current = state;
+      return;
+    }
+
+    const prevPlayers = prevStateRef.current.players;
+    const newAnimating = new Set();
+
+    state.players.forEach(player => {
+      const prevPlayer = prevPlayers.find(p => p.id === player.id);
+      if (prevPlayer && prevPlayer.pos !== player.pos) {
+        newAnimating.add(player.id);
+      }
+    });
+
+    if (newAnimating.size > 0) {
+      setAnimatingPawns(newAnimating);
+      const timer = setTimeout(() => setAnimatingPawns(new Set()), 400);
+      return () => clearTimeout(timer);
+    }
+
+    prevStateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    prevStateRef.current = state;
+  }, [state]);
   const cellSize = Math.floor((Math.min(window.innerWidth, 500) - 32) / 11);
 
   function getCellPos(idx) {
@@ -471,7 +534,7 @@ function MobileBoard({ state, myId, dispatch, setModal }) {
                 {pawns.length > 0 && (
                   <div className="pawn-cluster">
                     {pawns.map(p => (
-                      <span key={p.id} className="board-pawn">{p.token}</span>
+                      <span key={p.id} className={`board-pawn ${animatingPawns.has(p.id) ? 'hopAnimation' : ''}`}>{p.token}</span>
                     ))}
                   </div>
                 )}
@@ -557,7 +620,7 @@ function ActionBar({ state, myPlayer, dispatch, setModal }) {
   return (
     <div className="action-bar">
       <div className="action-row">
-        <ActionBtn icon="🎲" label="Roll" disabled={!canRoll} onClick={() => dispatch('roll')} highlight={canRoll} />
+        <ActionBtn icon="🎲" label="Roll" disabled={!canRoll} onClick={() => { setIsRolling(true); dispatch('roll'); setTimeout(() => setIsRolling(false), 600); }} highlight={canRoll} />
         <ActionBtn icon="🏗" label="Build" disabled={buildable.length === 0} onClick={() => setShowBuild(true)} />
         <ActionBtn icon="⇄" label="Trade" onClick={() => setShowTrade(true)} />
         <ActionBtn icon="🏦" label="Mort." onClick={() => setShowMort(true)} />

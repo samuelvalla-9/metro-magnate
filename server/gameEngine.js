@@ -32,6 +32,7 @@ function createGameState(players) {
       jailFreeCards: 0,
       properties: [],
       bankrupt: false,
+      movingSteps: 0,
     })),
     board,
     currentIdx: 0,
@@ -50,6 +51,8 @@ function createGameState(players) {
     pendingRent: null,     // rent waiting for payment
     pendingAuction: null,  // auction in progress
     tradeOffer: null,      // pending trade
+    isMoving: false,       // for movement animation
+    movingPlayerId: null,  // player currently moving
   };
 }
 
@@ -73,10 +76,9 @@ function adjustCash(state, playerId, amount) {
 }
 
 function rollDice(state) {
-  const d1 = Math.ceil(Math.random() * 6);
-  const d2 = Math.ceil(Math.random() * 6);
-  state.dice = [d1, d2];
-  return { d1, d2, doubles: d1 === d2 };
+  const die = Math.ceil(Math.random() * 6);
+  state.dice = [die];
+  return { die, doubles: false };
 }
 
 function sendToJail(state, playerId) {
@@ -102,16 +104,13 @@ function actionRoll(state, playerId) {
   const p = currentPlayer(state);
   if (p.id !== playerId || state.rollDone) return { error: 'Not your turn or already rolled' };
 
-  const { d1, d2, doubles } = rollDice(state);
-  const total = d1 + d2;
-  addLog(state, `${p.token} ${p.name} rolled ${d1}+${d2}=${total}${doubles ? ' (doubles!)' : ''}`, '');
+  const { die } = rollDice(state);
+  const total = die;
+  addLog(state, `${p.token} ${p.name} rolled ${total}`, '');
 
   if (p.inJail) {
-    if (doubles) {
-      p.inJail = false; p.jailTurns = 0;
-      addLog(state, `${p.token} ${p.name} rolled doubles and escaped jail!`, 'good');
-      state.rollDone = true;
-      return movePlayer(state, p, total);
+    if (false) {
+      // No doubles with single die
     } else {
       p.jailTurns++;
       if (p.jailTurns >= 3) {
@@ -128,19 +127,8 @@ function actionRoll(state, playerId) {
     }
   }
 
-  if (doubles) {
-    state.doublesCount++;
-    if (state.doublesCount >= 3) {
-      addLog(state, `${p.token} ${p.name} rolled 3 doubles — Go to Jail!`, 'bad');
-      sendToJail(state, p.id);
-      state.rollDone = true;
-      state.phase = 'end';
-      return { state };
-    }
-  } else {
-    state.doublesCount = 0;
-    state.rollDone = true;
-  }
+  state.doublesCount = 0;
+  state.rollDone = true;
 
   return movePlayer(state, p, total);
 }

@@ -78,6 +78,9 @@ wss.on('connection', (ws) => {
         existing.ws = ws;
         playerId = existing.id;
       } else {
+        // Check for duplicate emoji
+        const hasDuplicate = room.players.some(p => p.token === msg.token);
+        if (hasDuplicate) { sendTo(ws, { type: 'error', msg: 'duplicate_emoji', playerToken: msg.token }); return; }
         playerId = 'p_' + Math.random().toString(36).substring(2, 9);
         room.players.push({ id: playerId, ws, name: msg.name, token: msg.token, color: msg.color });
       }
