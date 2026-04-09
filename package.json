@@ -5,7 +5,8 @@
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js",
-    "dev": "nodemon server/server.js"
+    "dev": "nodemon server/server.js",
+    "vercel-build": "cd client && npm install && npm run build"
   },
   "engines": {
     "node": ">=18.0.0"
