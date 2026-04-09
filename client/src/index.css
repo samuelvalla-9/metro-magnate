@@ -394,11 +394,11 @@ html, body, #root {
   opacity: 0.3;
 }
 @keyframes diceRoll {
-  0% { transform: scale(1) rotateZ(0deg); opacity: 1; }
-  25% { transform: scale(1.15) rotateZ(90deg); opacity: 1; }
-  50% { transform: scale(1.1) rotateZ(180deg); opacity: 1; }
-  75% { transform: scale(1.15) rotateZ(270deg); opacity: 1; }
-  100% { transform: scale(1.1) rotateZ(360deg); opacity: 1; }
+  0% { transform: scale(1) rotateZ(0deg) rotateX(0deg); opacity: 1; }
+  25% { transform: scale(1.15) rotateZ(90deg) rotateX(45deg); opacity: 1; }
+  50% { transform: scale(1.1) rotateZ(180deg) rotateX(90deg); opacity: 1; }
+  75% { transform: scale(1.15) rotateZ(270deg) rotateX(-45deg); opacity: 1; }
+  100% { transform: scale(1.1) rotateZ(360deg) rotateX(0deg) rotateY(0deg); opacity: 1; }
 }
 
 /* ── PLAYER STRIP ── */
@@ -479,12 +479,12 @@ html, body, #root {
 .board-cell {
   position: absolute;
   border: 1px solid;
-  border-color: #e0d5cc;
+  border-color: #d4c5b9;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-end;
-  padding: 1px;
+  justify-content: center;
+  padding: 2px;
   cursor: pointer;
   overflow: hidden;
   transition: background 0.1s;
@@ -492,49 +492,73 @@ html, body, #root {
   -webkit-tap-highlight-color: transparent;
   background: #fefdfb;
 }
-.board-cell:active { background: #f0ebe5; }
+.board-cell:active { background: #e8e0d8; }
 .board-cell.corner {
   justify-content: center;
-  background: #e8dfd7;
+  background: #e8ddf2;
 }
 .corner-icon { font-size: 16px; }
 
 .cell-stripe {
-  width: 100%;
-  height: 5px;
-  flex-shrink: 0;
+  display: none;
 }
 .cell-lbl {
-  font-size: 4.5px;
-  color: #5a4a40;
+  font-size: 6px;
+  color: #1a1a1a;
   text-align: center;
-  line-height: 1.2;
-  word-break: break-all;
+  line-height: 1.1;
+  word-break: break-word;
+  font-weight: 600;
+  text-shadow: 0 0.5px 1px rgba(255, 255, 255, 0.3);
+}
+
+.cell-stripe {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+}
+.cell-lbl {
+  font-size: 6px;
+  color: #1a1a1a;
+  text-align: center;
+  line-height: 1.1;
+  word-break: break-word;
+  font-weight: 600;
+  text-shadow: 0 0.5px 1px rgba(255, 255, 255, 0.3);
 }
 .mort-badge {
   position: absolute;
   top: 1px; right: 1px;
-  font-size: 4px;
-  color: var(--red);
-  background: rgba(248,113,113,0.15);
+  font-size: 3px;
+  color: #8b0000;
+  background: rgba(255,200,200,0.8);
   border-radius: 2px;
   padding: 0 1px;
   font-weight: 700;
+  z-index: 3;
 }
 .house-badge {
-  font-size: 4.5px;
+  font-size: 3px;
   line-height: 1;
+  position: absolute;
+  bottom: 1px;
+  right: 1px;
+  z-index: 3;
 }
 .pawn-cluster {
   position: absolute;
   inset: 0;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   gap: 0;
   pointer-events: none;
   z-index: 2;
+  padding: 1px;
 }
 .board-pawn {
   font-size: 9px;
@@ -680,7 +704,7 @@ html, body, #root {
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
 }
 .dice-result-die.rolling {
-  animation: diceRoll 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards;
+  animation: diceRoll 1.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
 }
 .dice-result-text {
   font-size: 24px;

@@ -53,6 +53,8 @@ export default function App() {
   const [myToken, setMyToken] = useState(TOKENS[0]);
   const [shareLink, setShareLink] = useState('');
   const [isRolling, setIsRolling] = useState(false);
+  const [roomPlayers, setRoomPlayers] = useState([]);
+  const [joinPending, setJoinPending] = useState(false);
 
   // socket listeners
   useEffect(() => {
@@ -70,8 +72,10 @@ export default function App() {
       setScreen(SCREENS.LOBBY);
     });
     on('lobby', (msg) => {
+      setRoomPlayers(msg.players);
       setLobbyPlayers(msg.players);
       setIsHost(msg.host === myId);
+      setJoinPending(false);
     });
     on('state', (msg) => {
       setGameState(msg.state);
@@ -81,16 +85,9 @@ export default function App() {
       else setScreen(SCREENS.GAME);
     });
     on('error', (msg) => {
+      setJoinPending(false);
       if (msg.msg === 'duplicate_emoji') {
-        setModal(
-          <div className="confirm-modal">
-            <h3>🎭 Emoji Already Taken</h3>
-            <p>Another player is using {msg.playerToken}. Please choose a different emoji.</p>
-            <div className="bm-btns">
-              <button className="btn-primary" onClick={() => setModal(null)}>Change Emoji</button>
-            </div>
-          </div>
-        );
+        setError(`⚠ The emoji ${msg.playerToken} is already taken by another player. Choose a different one.`);
       } else {
         showToast(msg.msg, 'error');
       }
@@ -117,8 +114,17 @@ export default function App() {
     send({ type: 'create', name: myName.trim(), token: myToken, color: PLAYER_COLORS[0] });
   }
 
-  function joinRoom(code) {
+  function joinRoom(code, checkPlayers = []) {
     if (!myName.trim()) { setError('Enter your name'); return; }
+    if (!code) { setError('Enter a room code'); return; }
+    
+    // Check for duplicate emoji in provided player list
+    if (checkPlayers && checkPlayers.length > 0 && checkPlayers.some(p => p.token === myToken)) {
+      setError(`⚠ The emoji ${myToken} is already taken by another player. Choose a different one.`);
+      return;
+    }
+    
+    setJoinPending(true);
     const colorIdx = Math.floor(Math.random() * PLAYER_COLORS.length);
     send({ type: 'join', code: code.toUpperCase(), name: myName.trim(), token: myToken, color: PLAYER_COLORS[colorIdx] });
   }
@@ -143,6 +149,7 @@ export default function App() {
           myToken={myToken} setMyToken={setMyToken}
           connected={connected} error={error} setError={setError}
           onCreate={createRoom} onJoin={joinRoom}
+          roomPlayers={roomPlayers}
         />
       )}
       {screen === SCREENS.LOBBY && (
@@ -176,7 +183,7 @@ export default function App() {
 // ═══════════════════════════════════════════════
 // HOME SCREEN
 // ═══════════════════════════════════════════════
-function HomeScreen({ myName, setMyName, myToken, setMyToken, connected, error, setError, onCreate, onJoin }) {
+function HomeScreen({ myName, setMyName, myToken, setMyToken, connected, error, setError, onCreate, onJoin, roomPlayers = [] }) {
   const [joinCode, setJoinCode] = useState('');
   const [tab, setTab] = useState('create'); // create | join
 
@@ -242,7 +249,7 @@ function HomeScreen({ myName, setMyName, myToken, setMyToken, connected, error, 
                 onChange={e => setJoinCode(e.target.value.toUpperCase())}
                 maxLength={5}
               />
-              <button className="btn-primary flex-1" onClick={() => onJoin(joinCode)} disabled={!connected || joinCode.length < 4}>
+              <button className="btn-primary flex-1" onClick={() => onJoin(joinCode, roomPlayers)} disabled={!connected || joinCode.length < 4}>
                 Join →
               </button>
             </div>
@@ -341,8 +348,20 @@ function LobbyScreen({ code, players, isHost, onStart, myId, shareLink }) {
 // ═══════════════════════════════════════════════
 function GameScreen({ state, serverPlayers, myId, myPlayer, isMyTurn, dispatch, modal, setModal, isRolling, setIsRolling }) {
   const [activeTab, setActiveTab] = useState('board'); // board | props | log
+  const [allowPawnAnimation, setAllowPawnAnimation] = useState(false);
   const currentP = state.players[state.currentIdx];
   const isMe = currentP?.id === myId;
+
+  // Hide pawn animation while rolling, show it after
+  useEffect(() => {
+    if (isRolling) {
+      setAllowPawnAnimation(false);
+    } else {
+      // Wait for dice overlay to disappear then allow pawn animation
+      const timer = setTimeout(() => setAllowPawnAnimation(true), 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isRolling]);
 
   return (
     <div className="game-screen">
@@ -382,7 +401,7 @@ function GameScreen({ state, serverPlayers, myId, myPlayer, isMyTurn, dispatch, 
       {/* ── CONTENT AREA ── */}
       <div className="content-area">
         {activeTab === 'board' && (
-          <MobileBoard state={state} myId={myId} dispatch={dispatch} setModal={setModal} />
+          <MobileBoard state={state} myId={myId} dispatch={dispatch} setModal={setModal} allowPawnAnimation={allowPawnAnimation} />
         )}
         {activeTab === 'props' && (
           <PropertiesView state={state} myId={myId} dispatch={dispatch} isMyTurn={isMyTurn} />
@@ -453,12 +472,14 @@ function phaseLabel(state, isMe) {
 }
 
 // ─── MOBILE BOARD ───────────────────────────────
-function MobileBoard({ state, myId, dispatch, setModal }) {
+function MobileBoard({ state, myId, dispatch, setModal, allowPawnAnimation }) {
   const [animatingPawns, setAnimatingPawns] = useState(new Set());
   const prevStateRef = useRef(null);
 
   // Detect movement and trigger animations
   useEffect(() => {
+    if (!allowPawnAnimation) return; // Don't animate while rolling
+    
     if (!prevStateRef.current) {
       prevStateRef.current = state;
       return;
@@ -481,7 +502,7 @@ function MobileBoard({ state, myId, dispatch, setModal }) {
     }
 
     prevStateRef.current = state;
-  }, [state]);
+  }, [state, allowPawnAnimation]);
 
   useEffect(() => {
     prevStateRef.current = state;
@@ -527,15 +548,15 @@ function MobileBoard({ state, myId, dispatch, setModal }) {
                   top: pos.row * size,
                   width: isCorner ? size : size,
                   height: isCorner ? size : size,
-                  borderColor: owner ? owner.color : 'rgba(255,255,255,0.08)',
+                  borderColor: owner ? owner.color : '#d4c5b9',
+                  background: gc ? gc.color : '#fefdfb',
                 }}
                 onClick={() => showCellModal(cell, state, setModal)}
               >
-                {gc && <div className="cell-stripe" style={{ background: gc.color }} />}
                 {isCorner ? (
                   <span className="corner-icon">{cell.icon}</span>
                 ) : (
-                  <span className="cell-lbl">{cell.name.split('\n')[0].substring(0, 8)}</span>
+                  <span className="cell-lbl">{cell.name.split('\n')[0].substring(0, 12)}</span>
                 )}
                 {cell.mortgaged && <span className="mort-badge">M</span>}
                 {(cell.houses || 0) > 0 && (
@@ -630,7 +651,7 @@ function ActionBar({ state, myPlayer, dispatch, setModal, isRolling, setIsRollin
   return (
     <div className="action-bar">
       <div className="action-row">
-        <ActionBtn icon="🎲" label="Roll" disabled={!canRoll} onClick={() => { setIsRolling(true); setTimeout(() => { dispatch('roll'); setTimeout(() => setIsRolling(false), 600); }, 100); }} highlight={canRoll} />
+        <ActionBtn icon="🎲" label="Roll" disabled={!canRoll} onClick={() => { setIsRolling(true); setTimeout(() => { dispatch('roll'); setTimeout(() => setIsRolling(false), 1300); }, 100); }} highlight={canRoll} />
         <ActionBtn icon="🏗" label="Build" disabled={buildable.length === 0} onClick={() => setShowBuild(true)} />
         <ActionBtn icon="⇄" label="Trade" onClick={() => setShowTrade(true)} />
         <ActionBtn icon="🏦" label="Mort." onClick={() => setShowMort(true)} />
