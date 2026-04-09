@@ -1,9 +1,14 @@
 {
   "version": 2,
-  "buildCommand": "cd client && npm install && npx run build",
-  "outputDirectory": "client/dist",
-  "installCommand": "npm install",
-  "framework": null,
+  "builds": [
+    {
+      "src": "client/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    }
+  ],
   "routes": [
     {
       "src": "/(.*)",
