@@ -356,7 +356,7 @@ function GameScreen({ state, serverPlayers, myId, myPlayer, isMyTurn, dispatch, 
           </div>
         </div>
         <div className="dice-area">
-          <span className={`die ${isRolling ? 'rolling' : ''}`}>{state.dice[0]}</span>
+          <span className="die">{state.dice[0]}</span>
         </div>
       </div>
 
@@ -394,7 +394,17 @@ function GameScreen({ state, serverPlayers, myId, myPlayer, isMyTurn, dispatch, 
 
       {/* ── ACTION BAR (only for current player) ── */}
       {isMyTurn && myPlayer && (
-        <ActionBar state={state} myPlayer={myPlayer} dispatch={dispatch} setModal={setModal} />
+        <ActionBar state={state} myPlayer={myPlayer} dispatch={dispatch} setModal={setModal} isRolling={isRolling} setIsRolling={setIsRolling} />
+      )}
+
+      {/* ── DICE ROLLER OVERLAY ── */}
+      {isRolling && (
+        <div className="dice-roller-overlay">
+          <div className="dice-roller-container">
+            <div className="dice-result-die rolling">{state.dice[0]}</div>
+            <div className="dice-result-text">You rolled: {state.dice[0]}</div>
+          </div>
+        </div>
       )}
 
       {/* ── MODAL ── */}
@@ -601,7 +611,7 @@ function showCellModal(cell, state, setModal) {
 }
 
 // ─── ACTION BAR ─────────────────────────────────
-function ActionBar({ state, myPlayer, dispatch, setModal }) {
+function ActionBar({ state, myPlayer, dispatch, setModal, isRolling, setIsRolling }) {
   const [showBuild, setShowBuild] = useState(false);
   const [showTrade, setShowTrade] = useState(false);
   const [showMort, setShowMort] = useState(false);
@@ -620,7 +630,7 @@ function ActionBar({ state, myPlayer, dispatch, setModal }) {
   return (
     <div className="action-bar">
       <div className="action-row">
-        <ActionBtn icon="🎲" label="Roll" disabled={!canRoll} onClick={() => { setIsRolling(true); dispatch('roll'); setTimeout(() => setIsRolling(false), 600); }} highlight={canRoll} />
+        <ActionBtn icon="🎲" label="Roll" disabled={!canRoll} onClick={() => { setIsRolling(true); setTimeout(() => { dispatch('roll'); setTimeout(() => setIsRolling(false), 600); }, 100); }} highlight={canRoll} />
         <ActionBtn icon="🏗" label="Build" disabled={buildable.length === 0} onClick={() => setShowBuild(true)} />
         <ActionBtn icon="⇄" label="Trade" onClick={() => setShowTrade(true)} />
         <ActionBtn icon="🏦" label="Mort." onClick={() => setShowMort(true)} />
