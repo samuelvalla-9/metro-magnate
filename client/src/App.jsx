@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { BOARD, COLOR_GROUPS, GROUP_CELLS, TOKENS, PLAYER_COLORS } from "./gameData";
+import { COLOR_GROUPS, TOKENS, PLAYER_COLORS } from "./gameData";
 import "./index.css";
 
 // ─── WS HOOK ─────────────────────────────────────
@@ -28,11 +28,12 @@ function useGameSocket(serverUrl) {
 
 const SCREENS = { HOME: 'home', LOBBY: 'lobby', GAME: 'game', WIN: 'win' };
 
-function getCellPos(idx) {
-  if (idx <= 10) return { row: 10, col: 10 - idx };
-  if (idx <= 20) return { row: 10 - (idx - 10), col: 0 };
-  if (idx <= 30) return { row: 0, col: idx - 20 };
-  return { row: idx - 30, col: 10 };
+function getCellPos(idx, totalCells) {
+  const c = totalCells / 4;
+  if (idx <= c) return { row: c, col: c - idx };
+  if (idx <= c * 2) return { row: c - (idx - c), col: 0 };
+  if (idx <= c * 3) return { row: 0, col: idx - c * 2 };
+  return { row: idx - c * 3, col: c };
 }
 
 // ─── SEQUENTIAL ANIMATION MANAGER ────────────────
@@ -50,7 +51,7 @@ function useAnimationSequence() {
     timerRef.current = [];
   }
 
-  function startSequence(playerId, fromPos, toPos, targetTotal, onComplete) {
+  function startSequence(playerId, fromPos, toPos, targetTotal, onComplete, boardLength = 40) {
     clearAll();
     setFinalTotal(null);
     setPhase('rolling');
@@ -69,12 +70,12 @@ function useAnimationSequence() {
         const pause = setTimeout(() => {
           setPhase('moving');
           const steps = [];
-          if (((toPos - fromPos + 40) % 40) > 12) {
+          if (((toPos - fromPos + boardLength) % boardLength) > Math.floor(boardLength / 3)) {
             // Must be a jump (Jail, Card), skip step-by-step
             steps.push(toPos);
           } else {
             let p = fromPos;
-            while (p !== toPos) { p = (p + 1) % 40; steps.push(p); }
+            while (p !== toPos) { p = (p + 1) % boardLength; steps.push(p); }
           }
           if (steps.length === 0) { 
             setPhase('idle'); 
@@ -137,13 +138,36 @@ export default function App() {
   // track who is currently rolling so we know whether to show overlay
   const [rollingPlayerId, setRollingPlayerId] = useState(null);
 
+  // Reconnect on mount if session exists
   useEffect(() => {
-    on('created', (msg) => { setMyId(msg.playerId); setRoomCode(msg.code); setIsHost(true); setShareLink(`${window.location.origin}?join=${msg.code}`); setScreen(SCREENS.LOBBY); });
-    on('joined', (msg) => { setMyId(msg.playerId); setRoomCode(msg.code); setScreen(SCREENS.LOBBY); });
+    if (connected) {
+      const savedRoom = localStorage.getItem('metro_room');
+      const savedId = localStorage.getItem('metro_id');
+      if (savedRoom && savedId && !myId) {
+        send({ type: 'join', code: savedRoom, playerId: savedId });
+      }
+    }
+  }, [connected, send, myId]);
+
+  useEffect(() => {
+    on('created', (msg) => {
+      localStorage.setItem('metro_room', msg.code);
+      localStorage.setItem('metro_id', msg.playerId);
+      setMyId(msg.playerId); setRoomCode(msg.code); setIsHost(true); setShareLink(`${window.location.origin}?join=${msg.code}`); setScreen(SCREENS.LOBBY);
+    });
+    on('joined', (msg) => {
+      localStorage.setItem('metro_room', msg.code);
+      localStorage.setItem('metro_id', msg.playerId);
+      setMyId(msg.playerId); setRoomCode(msg.code); setScreen(SCREENS.LOBBY);
+    });
     on('lobby', (msg) => { setRoomPlayers(msg.players); setLobbyPlayers(msg.players); setIsHost(msg.host === myId); });
     on('state', (msg) => {
       setServerPlayers(msg.players);
-      if (msg.state.winner) { setGameState(msg.state); setScreen(SCREENS.WIN); return; }
+      if (msg.state.winner) {
+        localStorage.removeItem('metro_room');
+        localStorage.removeItem('metro_id');
+        setGameState(msg.state); setScreen(SCREENS.WIN); return;
+      }
       setScreen(SCREENS.GAME);
 
       setGameState(prev => {
@@ -157,10 +181,11 @@ export default function App() {
 
         if (moverId !== null) {
           const total = msg.state.dice.length > 1 ? msg.state.dice[0] + msg.state.dice[1] : msg.state.dice[0];
+          const blen = msg.state.board?.length || 40;
           setRollingPlayerId(moverId);
           anim.startSequence(moverId, fromPos, toPos, total, () => {
             setRollingPlayerId(null);
-          });
+          }, blen);
         }
 
         // Update component state immediately; MobileBoard uses animPos for visual display
@@ -168,18 +193,22 @@ export default function App() {
       });
     });
     on('error', (msg) => {
+      if (msg.msg === 'Room not found' || msg.msg === 'Game already started') {
+        localStorage.removeItem('metro_room');
+        localStorage.removeItem('metro_id');
+      }
       if (msg.msg === 'duplicate_emoji') setError(`⚠ Emoji ${msg.playerToken} is taken. Choose another.`);
       else showToast(msg.msg, 'error');
     });
     on('player_disconnected', (msg) => { showToast(`${msg.name} disconnected`, 'warn'); });
-  }, [on, myId]);
+  }, [on, myId, connected, send]);
 
   useEffect(() => {
     if (lobbyPlayers.length && myId) setIsHost(lobbyPlayers[0]?.id === myId);
   }, [lobbyPlayers, myId]);
 
   function showToast(msg, type = 'info') { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); }
-  function createRoom() { if (!myName.trim()) { setError('Enter your name'); return; } send({ type: 'create', name: myName.trim(), token: myToken, color: PLAYER_COLORS[0] }); }
+  function createRoom(settings) { if (!myName.trim()) { setError('Enter your name'); return; } send({ type: 'create', name: myName.trim(), token: myToken, color: PLAYER_COLORS[0], settings }); }
   function joinRoom(code, checkPlayers = []) {
     if (!myName.trim()) { setError('Enter your name'); return; }
     if (!code) { setError('Enter a room code'); return; }
@@ -219,6 +248,8 @@ export default function App() {
 function HomeScreen({ myName, setMyName, myToken, setMyToken, connected, error, setError, onCreate, onJoin, roomPlayers = [] }) {
   const [joinCode, setJoinCode] = useState('');
   const [tab, setTab] = useState('create');
+  const [rounds, setRounds] = useState(0);
+  const [netWorth, setNetWorth] = useState(0);
   return (
     <div className="home-screen">
       <div className="home-bg-grid" />
@@ -239,7 +270,28 @@ function HomeScreen({ myName, setMyName, myToken, setMyToken, connected, error, 
             <button className={`tab-btn ${tab === 'create' ? 'active' : ''}`} onClick={() => setTab('create')}>Create Room</button>
             <button className={`tab-btn ${tab === 'join' ? 'active' : ''}`} onClick={() => setTab('join')}>Join Room</button>
           </div>
-          {tab === 'create' && <button className="btn-primary" onClick={onCreate} disabled={!connected}>🏙 Create Game Room</button>}
+          {tab === 'create' && (
+            <div className="create-settings">
+              <div className="input-group">
+                <label>Round Limit</label>
+                <select className="input-field" value={rounds} onChange={e=>setRounds(+e.target.value)}>
+                  <option value={0}>Unlimited</option>
+                  <option value={15}>15 Rounds</option>
+                  <option value={20}>20 Rounds</option>
+                  <option value={30}>30 Rounds</option>
+                  <option value={50}>50 Rounds</option>
+                </select>
+              </div>
+              <div className="input-group">
+                <label>Net Worth Goal to Win</label>
+                <select className="input-field" value={netWorth} onChange={e=>setNetWorth(+e.target.value)}>
+                  <option value={0}>Unlimited</option>
+                  {[3000,4000,5000,6000,7000,8000,9000,10000].map(v => <option key={v} value={v}>${v}</option>)}
+                </select>
+              </div>
+              <button className="btn-primary mt-12" onClick={() => onCreate({ rounds, netWorth })} disabled={!connected}>🏙 Create Game Room</button>
+            </div>
+          )}
           {tab === 'join' && (
             <div className="join-row">
               <input className="input-field code-input" placeholder="ROOM CODE" value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase())} maxLength={5} />
@@ -331,13 +383,7 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
         <CornerDie value={anim.dieDisplay} isRolling={anim.phase === 'rolling'} lastTotal={state.dice[0] + state.dice[1]} phase={anim.phase} />
       </div>
 
-      <div className="player-strip">
-        {state.players.map(p => (
-          <div key={p.id} className={`ps-player ${p.id===state.players[state.currentIdx].id?'active':''} ${p.bankrupt?'bankrupt':''}`}>
-            <span>{p.token}</span><span className="ps-cash">${p.cash}</span>
-          </div>
-        ))}
-      </div>
+
 
       <div className="tab-bar">
         {['board','props','log'].map(t => (
@@ -369,7 +415,6 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
       {!isAnimating && isMyTurn && state.phase==='card' && state.pendingCard && <CardModal card={state.pendingCard} onAck={() => dispatch('ack_card')} />}
       {!isAnimating && isMyTurn && state.phase==='rent' && state.pendingRent && <RentModal state={state} rent={state.pendingRent} onPay={() => dispatch('pay_rent')} />}
       {!isAnimating && isMyTurn && state.phase==='buy' && <BuyModal state={state} player={myPlayer} onBuy={() => dispatch('buy')} onPass={() => dispatch('pass_buy')} />}
-      {!isAnimating && state.phase==='auction' && state.pendingAuction && <AuctionModal state={state} myId={myId} onBid={amount => dispatch('bid',{amount})} />}
       {!isAnimating && state.tradeOffer && state.tradeOffer.toId===myId && <TradeOfferModal state={state} trade={state.tradeOffer} onAccept={() => dispatch('trade_accept')} onDecline={() => dispatch('trade_decline')} />}
     </div>
   );
@@ -448,11 +493,24 @@ function getDotPattern(val) {
   return (p[val] || p[6]).map(v => v===1);
 }
 
-// ═══ MOBILE BOARD ═══════════════════════════════
 function MobileBoard({ state, myId, setModal, animPos }) {
-  const cellSize = Math.floor((Math.min(window.innerWidth, 500) - 32) / 11);
-  const size = cellSize;
-  const totalSize = size * 11;
+  const [boardWidth, setBoardWidth] = useState(380);
+
+  useEffect(() => {
+    function handleResize() {
+      setBoardWidth(Math.min(window.innerWidth, 500) - 16);
+    }
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const totalCells = state.board.length;
+  const cellsPerEdge = totalCells / 4;
+  const numCols = cellsPerEdge + 1;
+  const size = Math.floor(boardWidth / numCols);
+  const boardSize = size * numCols;
+  const innerSize = size * (numCols - 2);
 
   const displayPos = {};
   state.players.forEach(p => { displayPos[p.id] = animPos[p.id] !== undefined ? animPos[p.id] : p.pos; });
@@ -469,12 +527,12 @@ function MobileBoard({ state, myId, setModal, animPos }) {
   return (
     <div className="board-container">
       <div className="board-scroll">
-        <div className="board-grid" style={{ width:totalSize, height:totalSize, position:'relative' }}>
+        <div className="board-grid" style={{ width:boardSize, height:boardSize, position:'relative' }}>
           {state.board.map((cell, i) => {
-            const pos = getCellPos(i);
+            const pos = getCellPos(i, totalCells);
             const owner = cell.owner != null ? state.players.find(p => p.id===cell.owner) : null;
             const pawns = pawnsByPos[i] || [];
-            const isCorner = [0,10,20,30].includes(i);
+            const isCorner = i % cellsPerEdge === 0;
             const gc = cell.group ? COLOR_GROUPS[cell.group] : null;
             return (
               <div key={i} className={`board-cell ${isCorner?'corner':''}`}
@@ -497,13 +555,51 @@ function MobileBoard({ state, myId, setModal, animPos }) {
                 
                 {pawns.length>0 && (
                   <div className="pawn-cluster">
-                    {pawns.map(p => <span key={p.id} className="board-pawn pawn-hop">{p.token}</span>)}
+                    {pawns.map(p => (
+                      <span key={p.id} className="board-pawn pawn-hop" style={{ backgroundColor: p.color }}>
+                        <span className="pawn-emoji">{p.token}</span>
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>
             );
           })}
-          <div className="board-center" style={{ left:size, top:size, width:size*9, height:size*9 }}>
+          <div className="board-center" style={{ left:size, top:size, width:innerSize, height:innerSize }}>
+            {state.players.map((p, idx) => {
+              // Symmetrically position players around the corners of the center box
+              const totalP = state.players.length;
+              let top, left, right, bottom, transform;
+              if (idx === 0) { top = 8; left = 8; }
+              else if (idx === 1) { top = 8; right = 8; }
+              else if (idx === 2) { bottom = 8; left = 8; }
+              else if (idx === 3) { bottom = 8; right = 8; }
+              else if (idx === 4) { top = 8; left = '50%'; transform = 'translateX(-50%)'; }
+              else if (idx === 5) { bottom = 8; left = '50%'; transform = 'translateX(-50%)'; }
+              else if (idx === 6) { top = '50%'; left = 8; transform = 'translateY(-50%)'; }
+              else { top = '50%'; right = 8; transform = 'translateY(-50%)'; }
+
+              const nw = p.cash + p.properties.reduce((s, i) => {
+                const c = state.board[i];
+                const hc = COLOR_GROUPS[c.group]?.houseCost || 50;
+                return s + Math.floor(c.price / 2) + (c.houses || 0) * hc * 0.5;
+              }, 0);
+              const isActive = p.id === state.players[state.currentIdx].id;
+              return (
+                <div key={p.id}
+                     className={`bc-player ${isActive ? 'active' : ''} ${p.bankrupt ? 'bankrupt' : ''}`}
+                     style={{ position:'absolute', top, left, right, bottom, transform,
+                       background: isActive ? 'rgba(240,180,41,0.12)' : 'var(--surface)',
+                       border: `2px solid ${isActive ? 'var(--accent)' : p.color}`,
+                       borderRadius: 16, padding: '5px 10px', display:'flex', flexDirection:'column',
+                       alignItems:'center', gap:1, zIndex: 10, minWidth: 60,
+                       boxShadow: isActive ? '0 0 12px rgba(240,180,41,0.4)' : '0 2px 8px rgba(0,0,0,0.25)' }}>
+                  <span style={{ fontSize: 16 }}>{p.token}</span>
+                  <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:10, color:'var(--accent)', fontWeight:'bold', lineHeight:1 }}>${p.cash.toLocaleString()}</span>
+                  <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:9, color: p.color, fontWeight:'600', lineHeight:1 }}>NW ${Math.round(nw).toLocaleString()}</span>
+                </div>
+              );
+            })}
             <div className="bc-logo">METRO MAGNATE</div>
             {state.freeParking>0 && <div className="bc-pot">🅿️ ${state.freeParking}</div>}
           </div>
@@ -547,25 +643,19 @@ function ActionBar({ state, myPlayer, dispatch, setModal }) {
 
   const buildable = myPlayer.properties.map(idx => state.board[idx])
     .filter(c => c.type==='property' && c.group &&
-      GROUP_CELLS[c.group]?.every(i => state.board[i].owner===myPlayer.id) &&
+      state.groupCells[c.group]?.every(i => state.board[i].owner===myPlayer.id) &&
       (c.houses||0)<5 && myPlayer.cash>=COLOR_GROUPS[c.group].houseCost);
 
   return (
     <div className="action-bar">
-      {/* Primary action: Roll OR End Turn — whichever is the current action */}
+      {/* Primary action: Roll */}
       {canRoll && (
         <button className="primary-action-btn roll-active" onClick={() => dispatch('roll')}>
           <span className="pa-icon">🎲</span>
           <span className="pa-label">ROLL DICE</span>
         </button>
       )}
-      {canEnd && (
-        <button className="primary-action-btn end-active" onClick={() => dispatch('end_turn')}>
-          <span className="pa-icon">⏭</span>
-          <span className="pa-label">END TURN</span>
-        </button>
-      )}
-      {!canRoll && !canEnd && (
+      {!canRoll && (
         <div className="primary-action-btn waiting">
           <span className="pa-icon">⌛</span>
           <span className="pa-label">WAITING…</span>
@@ -690,18 +780,7 @@ function RentModal({ state, rent, onPay }) {
 function BuyModal({ state, player, onBuy, onPass }) {
   const cell = state.board[player.pos];
   const gc = cell.group ? COLOR_GROUPS[cell.group] : null;
-  return <ModalOverlay><div className="buy-modal">{gc&&<div className="bm-stripe" style={{background:gc.color}}/>}<div className="bm-name">{cell.name}</div>{gc&&<div className="bm-group" style={{color:gc.color}}>{gc.name} Group</div>}<div className="bm-price">${cell.price}</div><div className="bm-cash">Your cash: ${player.cash} → ${player.cash-cell.price}</div>{cell.type==='property'&&<div className="bm-rent">Base rent: ${cell.rent[0]}</div>}<div className="bm-btns"><button className="btn-primary" onClick={onBuy} disabled={player.cash<cell.price}>Buy</button><button className="btn-secondary" onClick={onPass}>Auction</button></div></div></ModalOverlay>;
-}
-
-function AuctionModal({ state, myId, onBid }) {
-  const [bid,setBid]=useState(0);
-  const myPlayer=state.players.find(p=>p.id===myId);
-  const cell=state.board[state.pendingAuction.cellIdx];
-  const myBid=state.pendingAuction.bids[myId];
-  const gc=cell.group?COLOR_GROUPS[cell.group]:null;
-  const allCount=state.players.filter(p=>!p.bankrupt).length;
-  const bidCount=Object.keys(state.pendingAuction.bids).length;
-  return <ModalOverlay><div className="auction-modal"><div className="am-title">🔨 Auction</div>{gc&&<div className="am-stripe" style={{background:gc.color}}/>}<div className="am-prop">{cell.name}</div><div className="am-status">{bidCount}/{allCount} bids placed</div>{myBid!==undefined?<div className="am-mybid">Your bid: ${myBid} submitted ✓</div>:<><input type="number" className="input-field" min="0" max={myPlayer?.cash||0} value={bid} onChange={e=>setBid(+e.target.value)} placeholder="Your bid"/><button className="btn-primary mt-12" onClick={()=>onBid(bid)}>Submit Bid</button><button className="btn-secondary mt-8" onClick={()=>onBid(0)}>Pass</button></>}</div></ModalOverlay>;
+  return <ModalOverlay><div className="buy-modal">{gc&&<div className="bm-stripe" style={{background:gc.color}}/>}<div className="bm-name">{cell.name}</div>{gc&&<div className="bm-group" style={{color:gc.color}}>{gc.name} Group</div>}<div className="bm-price">${cell.price}</div><div className="bm-cash">Your cash: ${player.cash} → ${player.cash-cell.price}</div>{cell.type==='property'&&<div className="bm-rent">Base rent: ${cell.rent[0]}</div>}<div className="bm-btns"><button className="btn-primary" onClick={onBuy} disabled={player.cash<cell.price}>Buy</button><button className="btn-secondary" onClick={onPass}>Skip</button></div></div></ModalOverlay>;
 }
 
 function TradeOfferModal({ state, trade, onAccept, onDecline }) {
@@ -714,8 +793,38 @@ function ConfirmModal({ title, desc, onYes, onNo }) {
 }
 
 function WinScreen({ state, onRestart }) {
-  const winner=state.players.find(p=>p.id===state.winner);
-  return <div className="win-screen"><div className="win-content"><div className="win-trophy">🏆</div><div className="win-token">{winner?.token}</div><div className="win-name" style={{color:winner?.color}}>{winner?.name}</div><div className="win-sub">City Tycoon Champion!</div><div className="win-stats">{state.players.map(p=><div key={p.id} className={`ws-row ${p.bankrupt?'bankrupt':''}`}><span>{p.token} {p.name}</span><span>${p.cash}</span></div>)}</div><button className="btn-primary mt-24" onClick={onRestart}>Play Again</button></div></div>;
+  const winner = state.players.find(p => p.id === state.winner);
+  const ranked = [...state.players].sort((a, b) => {
+    const nwA = a.cash + a.properties.reduce((s, i) => s + Math.floor((state.board[i]?.price||0) / 2), 0);
+    const nwB = b.cash + b.properties.reduce((s, i) => s + Math.floor((state.board[i]?.price||0) / 2), 0);
+    return nwB - nwA;
+  });
+  const settings = state.settings || {};
+  return (
+    <div className="win-screen">
+      <div className="win-content">
+        <div className="win-trophy">🏆</div>
+        <div className="win-token">{winner?.token}</div>
+        <div className="win-name" style={{color:winner?.color}}>{winner?.name}</div>
+        <div className="win-sub">City Tycoon Champion!</div>
+        {settings.rounds > 0 && <div className="win-sub" style={{fontSize:12,opacity:.7}}>After {settings.rounds} rounds</div>}
+        {settings.netWorth > 0 && <div className="win-sub" style={{fontSize:12,opacity:.7}}>Net Worth Goal: ${settings.netWorth.toLocaleString()}</div>}
+        <div className="win-stats">
+          {ranked.map((p, i) => {
+            const nw = p.cash + p.properties.reduce((s, idx) => s + Math.floor((state.board[idx]?.price||0) / 2), 0);
+            return (
+              <div key={p.id} className={`ws-row ${p.bankrupt ? 'bankrupt' : ''} ${p.id === state.winner ? 'winner' : ''}`}>
+                <span className="ws-rank">{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i+1}`}</span>
+                <span>{p.token} {p.name}</span>
+                <span style={{color:'var(--accent)', fontFamily:"'JetBrains Mono',monospace", fontSize:12}}>NW ${nw.toLocaleString()}</span>
+              </div>
+            );
+          })}
+        </div>
+        <button className="btn-primary mt-24" onClick={onRestart}>Play Again</button>
+      </div>
+    </div>
+  );
 }
 
 function ModalOverlay({ children, onClose }) {

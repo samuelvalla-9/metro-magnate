@@ -280,7 +280,27 @@ html, body, #root { height:100%; width:100%; background:var(--bg); color:var(--t
 
 /* Pawn hop — each tile gets a nice slow bounce */
 .pawn-cluster { position:absolute; inset:0; display:flex; flex-wrap:wrap; align-items:center; justify-content:center; pointer-events:none; z-index:2; }
-.board-pawn { font-size:10px; line-height:1; filter:drop-shadow(0 1px 3px rgba(0,0,0,.5)); }
+.board-pawn {
+  display:flex; align-items:center; justify-content:center;
+  width:20px; height:20px; border-radius:50%; margin:-1px; z-index:5;
+  transition: transform 0.3s ease; line-height:1;
+  box-shadow: 0 2px 3px rgba(0,0,0,0.5), inset 0 -2px 3px rgba(0,0,0,0.3), inset 0 2px 2px rgba(255,255,255,0.4);
+  border: 1px solid rgba(0,0,0,0.4);
+  position: relative;
+  overflow: hidden;
+}
+.board-pawn::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 50%;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.3), rgba(255,255,255,0));
+  pointer-events: none;
+}
+.pawn-emoji {
+  font-size:13px;
+  filter: drop-shadow(0 2px 1px rgba(0,0,0,0.8));
+  transform: translateY(-0.5px);
+}
 .pawn-hop {
   animation: pawnBounce .32s cubic-bezier(.34,1.56,.64,1);
 }
@@ -496,15 +516,21 @@ html, body, #root { height:100%; width:100%; background:var(--bg); color:var(--t
 .win-name  { font-family:'Bebas Neue',sans-serif; font-size:48px; letter-spacing:5px; margin-bottom:4px; }
 .win-sub   { font-size:13px; letter-spacing:3px; color:var(--text2); text-transform:uppercase; margin-bottom:24px; }
 .win-stats { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; margin-bottom:20px; }
-.ws-row { display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-bottom:1px solid var(--border); font-size:14px; }
+.ws-row { display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-bottom:1px solid var(--border); font-size:14px; gap:8px; }
 .ws-row:last-child { border-bottom:none; }
 .ws-row.bankrupt { opacity:.35; text-decoration:line-through; }
+.ws-row.winner { background:rgba(240,180,41,0.08); }
+.ws-rank { font-size:16px; width:28px; text-align:center; flex-shrink:0; }
 
 /* ─── TOAST ──────────────────────────────── */
 .toast { position:fixed; bottom:80px; left:50%; transform:translateX(-50%); background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:9px 18px; font-size:13px; z-index:200; animation:toastIn .35s cubic-bezier(.34,1.56,.64,1); white-space:nowrap; box-shadow:0 8px 30px rgba(0,0,0,.4); }
 .toast-error { border-color:var(--red); color:var(--red); }
 .toast-warn  { border-color:var(--accent); color:var(--accent); }
 @keyframes toastIn { from{opacity:0;transform:translateX(-50%) translateY(14px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+
+/* ─── CREATE SETTINGS ────────────────────── */
+.create-settings { display:flex; flex-direction:column; gap:10px; }
+.create-settings select.input-field { appearance:none; -webkit-appearance:none; cursor:pointer; }
 
 .mt-8  { margin-top:8px; }
 .mt-12 { margin-top:12px; }

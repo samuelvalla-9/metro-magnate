@@ -5,6 +5,7 @@
 const { WebSocketServer } = require('ws');
 const http = require('http');
 const { createGameState, ...actions } = require('./gameEngine');
+const { PLAYER_COLORS } = require('../shared/gameData');
 
 const PORT = process.env.PORT || 8080;
 const server = http.createServer((req, res) => {
@@ -56,9 +57,10 @@ wss.on('connection', (ws) => {
       roomCode = code;
       rooms[code] = {
         state: null,
-        players: [{ id: playerId, ws, name: msg.name, token: msg.token, color: msg.color }],
+        players: [{ id: playerId, ws, name: msg.name, token: msg.token, color: PLAYER_COLORS[0] }],
         host: playerId,
         started: false,
+        settings: msg.settings || { rounds: 0, netWorth: 0 },
       };
       sendTo(ws, { type: 'created', code, playerId });
       broadcast(rooms[code], { type: 'lobby', players: rooms[code].players.map(p=>({id:p.id,name:p.name,token:p.token,color:p.color})), host: playerId });
@@ -69,22 +71,38 @@ wss.on('connection', (ws) => {
     if (msg.type === 'join') {
       const room = rooms[msg.code];
       if (!room) { sendTo(ws, { type: 'error', msg: 'Room not found' }); return; }
+
+      // Check if this is a reconnection attempt (by ID or Name)
+      const existing = room.players.find(p => (msg.playerId && p.id === msg.playerId) || (msg.name && p.name === msg.name));
+      
+      if (existing) {
+        // Allow reconnection even if game started
+        existing.ws = ws;
+        playerId = existing.id;
+        roomCode = msg.code;
+        sendTo(ws, { type: 'joined', code: msg.code, playerId: existing.id });
+        
+        if (room.started) {
+          sendTo(ws, roomState(room));
+        } else {
+          broadcast(room, { type: 'lobby', players: room.players.map(p=>({id:p.id,name:p.name,token:p.token,color:p.color})), host: room.host });
+        }
+        return;
+      }
+
+      // If not reconnecting, standard join rules apply
       if (room.started) { sendTo(ws, { type: 'error', msg: 'Game already started' }); return; }
       if (room.players.length >= 8) { sendTo(ws, { type: 'error', msg: 'Room is full (8 players max)' }); return; }
 
-      // Check if reconnecting
-      const existing = room.players.find(p => p.name === msg.name);
-      if (existing && !existing.ws) {
-        existing.ws = ws;
-        playerId = existing.id;
-      } else {
-        // Check for duplicate emoji
-        const hasDuplicate = room.players.some(p => p.token === msg.token);
-        if (hasDuplicate) { sendTo(ws, { type: 'error', msg: 'duplicate_emoji', playerToken: msg.token }); return; }
-        playerId = 'p_' + Math.random().toString(36).substring(2, 9);
-        room.players.push({ id: playerId, ws, name: msg.name, token: msg.token, color: msg.color });
-      }
+      // Check for duplicate emoji
+      const hasDuplicate = room.players.some(p => p.token === msg.token);
+      if (hasDuplicate) { sendTo(ws, { type: 'error', msg: 'duplicate_emoji', playerToken: msg.token }); return; }
+
+      playerId = 'p_' + Math.random().toString(36).substring(2, 9);
+      const color = PLAYER_COLORS[room.players.length % PLAYER_COLORS.length];
+      room.players.push({ id: playerId, ws, name: msg.name, token: msg.token, color });
       roomCode = msg.code;
+      
       sendTo(ws, { type: 'joined', code: msg.code, playerId });
       broadcast(room, { type: 'lobby', players: room.players.map(p=>({id:p.id,name:p.name,token:p.token,color:p.color})), host: room.host });
       return;
@@ -93,12 +111,19 @@ wss.on('connection', (ws) => {
     const room = rooms[roomCode];
     if (!room) return;
 
+    // Reset idle timer on any action from the current player
+    const currentPlayer = room.state?.players[room.state.currentIdx];
+    if (currentPlayer && currentPlayer.id === playerId) {
+      room.lastActionAt = Date.now();
+    }
+
     // ── START GAME ──
     if (msg.type === 'start') {
       if (room.host !== playerId) { sendTo(ws, { type: 'error', msg: 'Only host can start' }); return; }
       if (room.players.length < 2) { sendTo(ws, { type: 'error', msg: 'Need at least 2 players' }); return; }
-      room.state = createGameState(room.players);
+      room.state = createGameState(room.players, room.settings);
       room.started = true;
+      room.lastActionAt = Date.now();
       broadcast(room, roomState(room));
       return;
     }
@@ -112,7 +137,6 @@ wss.on('connection', (ws) => {
       pay_rent:    () => actions.actionPayRent(room.state, playerId),
       buy:         () => actions.actionBuyProperty(room.state, playerId),
       pass_buy:    () => actions.actionPassBuy(room.state, playerId),
-      bid:         () => actions.actionBid(room.state, playerId, msg.amount),
       build:       () => actions.actionBuildHouse(room.state, playerId, msg.cellIdx),
       mortgage:    () => actions.actionMortgage(room.state, playerId, msg.cellIdx),
       unmortgage:  () => actions.actionUnmortgage(room.state, playerId, msg.cellIdx),
@@ -130,6 +154,20 @@ wss.on('connection', (ws) => {
         sendTo(ws, { type: 'error', msg: result.error });
       } else {
         broadcast(room, roomState(room));
+        
+        // Handle Auto-End Turn if phase is 'end'
+        if (room.state.phase === 'end') {
+          if (room.autoEndTimeout) clearTimeout(room.autoEndTimeout);
+          room.autoEndTimeout = setTimeout(() => {
+            if (room.state && room.state.phase === 'end') {
+              const currentP = room.state.players[room.state.currentIdx];
+              actions.actionEndTurn(room.state, currentP.id);
+              broadcast(room, roomState(room));
+              room.lastActionAt = Date.now();
+              room.autoEndTimeout = null;
+            }
+          }, 2000);
+        }
       }
     }
   });
@@ -145,11 +183,31 @@ wss.on('connection', (ws) => {
     // Cleanup empty rooms after delay
     setTimeout(() => {
       if (rooms[roomCode] && rooms[roomCode].players.every(p => !p.ws)) {
+        if (rooms[roomCode].autoEndTimeout) clearTimeout(rooms[roomCode].autoEndTimeout);
         delete rooms[roomCode];
       }
     }, 5 * 60 * 1000);
   });
 });
+
+// Global heartbeat for Idle Timers
+setInterval(() => {
+  const now = Date.now();
+  Object.keys(rooms).forEach(code => {
+    const room = rooms[code];
+    if (room.started && room.state && !room.state.winner) {
+      if (room.state.phase === 'roll' && !room.state.rollDone) {
+        if (now - room.lastActionAt > 60000) {
+          const currentP = room.state.players[room.state.currentIdx];
+          console.log(`[Auto-Roll] Room ${code}, Player ${currentP.name}`);
+          actions.actionRoll(room.state, currentP.id);
+          broadcast(room, roomState(room));
+          room.lastActionAt = now;
+        }
+      }
+    }
+  });
+}, 1000);
 
 server.listen(PORT, () => {
   console.log(`🏙 Metro Magnate server running on port ${PORT}`);

@@ -2,10 +2,7 @@
 // METRO MAGNATE — Game Engine (Server-Side)
 // ═══════════════════════════════════════════════
 
-const {
-  BOARD, GROUP_CELLS, COLOR_GROUPS,
-  CHANCE_CARDS, CHEST_CARDS
-} = require('../shared/gameData');
+const { getGameData, COLOR_GROUPS } = require('../shared/gameData');
 
 function shuffle(arr) {
   const a = [...arr];
@@ -16,7 +13,8 @@ function shuffle(arr) {
   return a;
 }
 
-function createGameState(players) {
+function createGameState(players, settings = { rounds: 0, netWorth: 0 }) {
+  const { BOARD, CHANCE_CARDS, CHEST_CARDS, GROUP_CELLS } = getGameData(players.length);
   const board = BOARD.map(c => ({ ...c }));
 
   return {
@@ -35,6 +33,11 @@ function createGameState(players) {
       movingSteps: 0,
     })),
     board,
+    groupCells: GROUP_CELLS,
+    chanceCards: CHANCE_CARDS,
+    chestCards: CHEST_CARDS,
+    settings,
+    roundCount: 1,
     currentIdx: 0,
     phase: 'roll',        // roll | rolled | buy | card | jail | end
     dice: [1, 1],
@@ -66,7 +69,7 @@ function currentPlayer(state) {
 }
 
 function ownsFullGroup(state, playerId, group) {
-  const cells = GROUP_CELLS[group] || [];
+  const cells = state.groupCells[group] || [];
   return cells.every(idx => state.board[idx].owner === playerId);
 }
 
@@ -83,7 +86,7 @@ function rollDice(state) {
 
 function sendToJail(state, playerId) {
   const p = state.players.find(pl => pl.id === playerId);
-  p.pos = 10;
+  p.pos = state.board.findIndex(c => c.type === 'jail');
   p.inJail = true;
   p.jailTurns = 0;
   addLog(state, `${p.token} ${p.name} went to Jail!`, 'bad');
@@ -135,7 +138,7 @@ function actionRoll(state, playerId) {
 
 function movePlayer(state, p, steps) {
   const oldPos = p.pos;
-  const newPos = (p.pos + steps) % 40;
+  const newPos = (p.pos + steps) % state.board.length;
   if (newPos < oldPos) {
     adjustCash(state, p.id, 200);
     addLog(state, `${p.token} ${p.name} passed GO — collected $200!`, 'good');
@@ -178,13 +181,13 @@ function landOn(state, p, cell) {
   } else if (cell.type === 'chance') {
     const cardIdx = state.chanceDeck[state.chanceIdx % state.chanceDeck.length];
     state.chanceIdx++;
-    const card = CHANCE_CARDS[cardIdx];
+    const card = state.chanceCards[cardIdx];
     state.pendingCard = { ...card, deckType: 'chance' };
     state.phase = 'card';
   } else if (cell.type === 'chest') {
     const cardIdx = state.chestDeck[state.chestIdx % state.chestDeck.length];
     state.chestIdx++;
-    const card = CHEST_CARDS[cardIdx];
+    const card = state.chestCards[cardIdx];
     state.pendingCard = { ...card, deckType: 'chest' };
     state.phase = 'card';
   } else if (cell.type === 'railroad' || cell.type === 'utility' || cell.type === 'property') {
@@ -244,7 +247,7 @@ function actionAcknowledgeCard(state, playerId) {
   } else if (card.action === 'goto') {
     moveTo(state, p, card.target);
   } else if (card.action === 'move') {
-    const newPos = ((p.pos + card.delta) + 40) % 40;
+    const newPos = ((p.pos + card.delta) + state.board.length) % state.board.length;
     p.pos = newPos;
     landOn(state, p, state.board[newPos]);
   } else if (card.action === 'gojail') {
@@ -324,47 +327,11 @@ function actionPassBuy(state, playerId) {
   const p = currentPlayer(state);
   if (p.id !== playerId) return { error: 'Not your turn' };
   const cell = state.board[p.pos];
-  // Start auction
-  state.pendingAuction = {
-    cellIdx: cell.idx,
-    bids: {},
-    phase: 'bidding',
-  };
-  addLog(state, `${cell.name} goes to auction!`, 'info');
-  state.phase = 'auction';
+  addLog(state, `${p.token} ${p.name} declined to buy ${cell.name}`, '');
+  state.phase = 'end';
   return { state };
 }
 
-function actionBid(state, playerId, amount) {
-  if (!state.pendingAuction) return { error: 'No auction' };
-  const p = state.players.find(pl => pl.id === playerId);
-  if (!p || p.bankrupt) return { error: 'Invalid player' };
-  if (amount < 0 || amount > p.cash) return { error: 'Invalid bid' };
-  state.pendingAuction.bids[playerId] = amount;
-
-  const activePlayers = state.players.filter(pl => !pl.bankrupt);
-  const allBid = activePlayers.every(pl => state.pendingAuction.bids[pl.id] !== undefined);
-
-  if (allBid) {
-    let winner = null, best = 0;
-    activePlayers.forEach(pl => {
-      const bid = state.pendingAuction.bids[pl.id] || 0;
-      if (bid > best) { best = bid; winner = pl; }
-    });
-    if (winner && best > 0) {
-      const cell = state.board[state.pendingAuction.cellIdx];
-      adjustCash(state, winner.id, -best);
-      cell.owner = winner.id;
-      winner.properties.push(cell.idx);
-      addLog(state, `${winner.token} ${winner.name} won auction for ${cell.name} at $${best}!`, 'good');
-    } else {
-      addLog(state, `Auction ended — no winner`, '');
-    }
-    state.pendingAuction = null;
-    state.phase = 'end';
-  }
-  return { state };
-}
 
 function actionBuildHouse(state, playerId, cellIdx) {
   const p = state.players.find(pl => pl.id === playerId);
@@ -488,16 +455,29 @@ function actionEndTurn(state, playerId) {
 function advanceTurn(state) {
   state.rollDone = false;
   state.doublesCount = 0;
-  let next = (state.currentIdx + 1) % state.players.length;
+
+  const prevIdx = state.currentIdx;
+
+  // Find the next non-bankrupt player
+  let next = (prevIdx + 1) % state.players.length;
   let tries = 0;
   while (state.players[next].bankrupt && tries < state.players.length) {
     next = (next + 1) % state.players.length;
     tries++;
   }
+
+  // A new round starts when we wrap around past player 0
+  // i.e., the previously active player was after or at the player who goes after 0
+  const wrapped = next <= prevIdx;
+  if (wrapped) state.roundCount++;
+
   state.currentIdx = next;
   state.phase = 'roll';
   const np = state.players[next];
-  addLog(state, `— ${np.token} ${np.name}'s turn —`, 'info');
+  const roundLabel = state.settings?.rounds > 0
+    ? `Round ${state.roundCount}/${state.settings.rounds}`
+    : `Round ${state.roundCount}`;
+  addLog(state, `— ${np.token} ${np.name}'s turn (${roundLabel}) —`, 'info');
   checkWin(state);
   return { state };
 }
@@ -530,13 +510,42 @@ function checkWin(state) {
   if (alive.length === 1) {
     state.winner = alive[0].id;
     state.phase = 'won';
-    addLog(state, `🏆 ${alive[0].token} ${alive[0].name} wins Metro Magnate!`, 'info');
+    addLog(state, `🏆 ${alive[0].token} ${alive[0].name} wins Metro Magnate by last man standing!`, 'info');
+    return;
+  }
+
+  // Check Net Worth limits
+  if (state.settings.netWorth > 0) {
+    const winner = alive.find(p => netWorth(state, p.id) >= state.settings.netWorth);
+    if (winner) {
+      state.winner = winner.id;
+      state.phase = 'won';
+      addLog(state, `🏆 ${winner.token} ${winner.name} reached the goal of $${state.settings.netWorth} and wins!`, 'info');
+      return;
+    }
+  }
+
+  // Check Round Limit
+  if (state.settings.rounds > 0 && state.roundCount > state.settings.rounds) {
+    // Game ends, highest net worth wins
+    let best = alive[0];
+    let maxNW = netWorth(state, best.id);
+    for (let i = 1; i < alive.length; i++) {
+       const nw = netWorth(state, alive[i].id);
+       if (nw > maxNW) {
+         best = alive[i];
+         maxNW = nw;
+       }
+    }
+    state.winner = best.id;
+    state.phase = 'won';
+    addLog(state, `🏆 Round limit reached! ${best.token} ${best.name} wins by highest net worth ($${maxNW})!`, 'info');
   }
 }
 
 module.exports = {
   createGameState, actionRoll, actionAcknowledgeCard, actionPayRent,
-  actionBuyProperty, actionPassBuy, actionBid, actionBuildHouse,
+  actionBuyProperty, actionPassBuy, actionBuildHouse,
   actionMortgage, actionUnmortgage, actionUseJailFree,
   actionProposeTrade, actionAcceptTrade, actionDeclineTrade,
   actionBankrupt, actionEndTurn,
