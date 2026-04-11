@@ -1,13 +1,15 @@
-const CACHE_NAME = 'metro-magnate-v1';
+const CACHE_NAME = 'metro-magnate-v2';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/manifest.json',
   '/pwa-192.png',
-  '/pwa-512.png'
+  '/pwa-512.png',
+  '/maskable-icon.png'
 ];
 
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(ASSETS_TO_CACHE);
