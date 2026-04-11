@@ -156,7 +156,7 @@ export default function App() {
         });
 
         if (moverId !== null) {
-          const total = msg.state.dice[0] + msg.state.dice[1];
+          const total = msg.state.dice.length > 1 ? msg.state.dice[0] + msg.state.dice[1] : msg.state.dice[0];
           setRollingPlayerId(moverId);
           anim.startSequence(moverId, fromPos, toPos, total, () => {
             setRollingPlayerId(null);
@@ -366,11 +366,11 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
       )}
 
       {modal && <ModalOverlay onClose={() => setModal(null)}>{modal}</ModalOverlay>}
-      {isMyTurn && state.phase==='card' && state.pendingCard && <CardModal card={state.pendingCard} onAck={() => dispatch('ack_card')} />}
-      {isMyTurn && state.phase==='rent' && state.pendingRent && <RentModal state={state} rent={state.pendingRent} onPay={() => dispatch('pay_rent')} />}
-      {isMyTurn && state.phase==='buy' && <BuyModal state={state} player={myPlayer} onBuy={() => dispatch('buy')} onPass={() => dispatch('pass_buy')} />}
-      {state.phase==='auction' && state.pendingAuction && <AuctionModal state={state} myId={myId} onBid={amount => dispatch('bid',{amount})} />}
-      {state.tradeOffer && state.tradeOffer.toId===myId && <TradeOfferModal state={state} trade={state.tradeOffer} onAccept={() => dispatch('trade_accept')} onDecline={() => dispatch('trade_decline')} />}
+      {!isAnimating && isMyTurn && state.phase==='card' && state.pendingCard && <CardModal card={state.pendingCard} onAck={() => dispatch('ack_card')} />}
+      {!isAnimating && isMyTurn && state.phase==='rent' && state.pendingRent && <RentModal state={state} rent={state.pendingRent} onPay={() => dispatch('pay_rent')} />}
+      {!isAnimating && isMyTurn && state.phase==='buy' && <BuyModal state={state} player={myPlayer} onBuy={() => dispatch('buy')} onPass={() => dispatch('pass_buy')} />}
+      {!isAnimating && state.phase==='auction' && state.pendingAuction && <AuctionModal state={state} myId={myId} onBid={amount => dispatch('bid',{amount})} />}
+      {!isAnimating && state.tradeOffer && state.tradeOffer.toId===myId && <TradeOfferModal state={state} trade={state.tradeOffer} onAccept={() => dispatch('trade_accept')} onDecline={() => dispatch('trade_decline')} />}
     </div>
   );
 }
@@ -484,11 +484,17 @@ function MobileBoard({ state, myId, setModal, animPos }) {
                   background: gc ? gc.color+'80' : isCorner ? '#e8e0d0' : '#fefdfb' }}
                 onClick={() => showCellModal(cell, state, setModal)}>
                 {gc && <div className="cell-stripe" style={{ background:gc.color }} />}
-                {isCorner
-                  ? <span className="corner-icon">{cell.icon}</span>
-                  : <span className="cell-lbl">{cell.name.split('\n')[0].substring(0,12)}</span>}
-                {cell.mortgaged && <span className="mort-badge">M</span>}
-                {(cell.houses||0)>0 && <span className="house-badge">{cell.houses===5?'🏨':'🏠'.repeat(cell.houses)}</span>}
+                
+                {isCorner ? (
+                   <span className="corner-icon">{cell.icon}</span>
+                ) : (
+                   <div className={`cell-content ${!gc ? 'no-stripe' : ''}`}>
+                     <span className="cell-lbl">{cell.name.split('\n')[0].substring(0,12)}</span>
+                     {cell.mortgaged && <span className="mort-badge">M</span>}
+                     {(cell.houses||0)>0 && <span className="house-badge">{cell.houses===5?'🏨':'🏠'.repeat(cell.houses)}</span>}
+                   </div>
+                )}
+                
                 {pawns.length>0 && (
                   <div className="pawn-cluster">
                     {pawns.map(p => <span key={p.id} className="board-pawn pawn-hop">{p.token}</span>)}

@@ -76,10 +76,9 @@ function adjustCash(state, playerId, amount) {
 }
 
 function rollDice(state) {
-  const die1 = Math.ceil(Math.random() * 6);
-  const die2 = Math.ceil(Math.random() * 6);
-  state.dice = [die1, die2];
-  return { die: die1 + die2, doubles: die1 === die2 };
+  const die = Math.ceil(Math.random() * 6);
+  state.dice = [die];
+  return { die, doubles: false };
 }
 
 function sendToJail(state, playerId) {
@@ -105,16 +104,13 @@ function actionRoll(state, playerId) {
   const p = currentPlayer(state);
   if (p.id !== playerId || state.rollDone) return { error: 'Not your turn or already rolled' };
 
-  const { die, doubles } = rollDice(state);
+  const { die } = rollDice(state);
   const total = die;
-  addLog(state, `${p.token} ${p.name} rolled ${total} ${doubles ? '(Doubles!)' : ''}`, '');
+  addLog(state, `${p.token} ${p.name} rolled ${total}`, '');
 
   if (p.inJail) {
-    if (doubles) {
-      p.inJail = false; p.jailTurns = 0;
-      addLog(state, `${p.token} ${p.name} rolled doubles and left jail!`, 'good');
-      state.rollDone = true; // Still one move
-      return movePlayer(state, p, total);
+    if (false) {
+      // No doubles with single die
     } else {
       p.jailTurns++;
       if (p.jailTurns >= 3) {
@@ -131,22 +127,8 @@ function actionRoll(state, playerId) {
     }
   }
 
-  if (doubles) {
-    state.doublesCount++;
-    if (state.doublesCount >= 3) {
-      addLog(state, `${p.token} ${p.name} rolled 3 doubles! Go to Jail!`, 'bad');
-      state.doublesCount = 0;
-      state.rollDone = true;
-      sendToJail(state, p.id);
-      state.phase = 'end';
-      return { state };
-    } else {
-      state.rollDone = false; // Can roll again
-    }
-  } else {
-    state.doublesCount = 0;
-    state.rollDone = true;
-  }
+  state.doublesCount = 0;
+  state.rollDone = true;
 
   return movePlayer(state, p, total);
 }

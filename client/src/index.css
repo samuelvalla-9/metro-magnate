@@ -265,14 +265,18 @@ html, body, #root { height:100%; width:100%; background:var(--bg); color:var(--t
 .board-container { width:100%; height:100%; display:flex; align-items:center; justify-content:center; overflow:auto; padding:8px; background:#f0ebe0; }
 .board-scroll { display:inline-block; }
 .board-grid { background:var(--board-bg); border:2px solid var(--board-border); border-radius:6px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,.15); }
-.board-cell { position:absolute; border:1px solid; border-color:var(--board-border); display:flex; flex-direction:column; align-items:center; justify-content:flex-end; padding:1px; cursor:pointer; overflow:hidden; background:var(--board-cell); transition:background .15s ease; -webkit-tap-highlight-color:transparent; }
+.board-cell { position:absolute; border:1px solid var(--board-border); display:flex; flex-direction:column; align-items:center; justify-content:flex-start; cursor:pointer; overflow:hidden; background:var(--board-cell); transition:background .15s ease; -webkit-tap-highlight-color:transparent; }
 .board-cell:active { background:#e8dfc8; }
-.board-cell.corner { justify-content:center; background:var(--board-corner); }
+.board-cell.corner { justify-content:center; background:var(--board-corner); padding:1px; }
 .corner-icon { font-size:18px; }
-.cell-stripe { width:100%; height:8px; flex-shrink:0; }
-.cell-lbl { font-size:8.5px; color:#111; text-align:center; line-height:1.1; word-break:break-word; font-family:'Outfit',sans-serif; font-weight:700; padding:2px 1px 0; }
-.mort-badge { position:absolute; top:1px; right:1px; font-size:4.5px; color:#c0392b; background:rgba(192,57,43,.15); border-radius:2px; padding:0 1px; font-weight:700; }
-.house-badge { font-size:6px; line-height:1; transform:translateY(-1px); }
+
+.cell-stripe { position:absolute; top:0; left:0; width:100%; height:8px; z-index:1; }
+.cell-content { position:absolute; top:8px; left:0; right:0; bottom:0; padding-top:4px; display:flex; flex-direction:column; align-items:center; }
+.cell-content.no-stripe { top:0; padding-top:12px; }
+
+.cell-lbl { font-size:8.5px; color:#111; text-align:center; line-height:1.1; word-break:break-word; font-family:'Outfit',sans-serif; font-weight:700; padding:0 2px; }
+.mort-badge { position:absolute; top:2px; right:2px; font-size:4.5px; color:#c0392b; background:rgba(192,57,43,.15); border-radius:2px; padding:0 1px; font-weight:700; z-index:2; }
+.house-badge { position:absolute; top:-2px; font-size:6px; line-height:1; z-index:2; }
 
 /* Pawn hop — each tile gets a nice slow bounce */
 .pawn-cluster { position:absolute; inset:0; display:flex; flex-wrap:wrap; align-items:center; justify-content:center; pointer-events:none; z-index:2; }
