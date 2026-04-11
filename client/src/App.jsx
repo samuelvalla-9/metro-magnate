@@ -137,6 +137,14 @@ export default function App() {
   const pendingState = useRef(null);
   // track who is currently rolling so we know whether to show overlay
   const [rollingPlayerId, setRollingPlayerId] = useState(null);
+  const [initialJoinCode, setInitialJoinCode] = useState('');
+
+  // Handle URL parameters for joining
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('join');
+    if (code) setInitialJoinCode(code.toUpperCase());
+  }, []);
 
   // Reconnect on mount if session exists
   useEffect(() => {
@@ -227,7 +235,17 @@ export default function App() {
 
   return (
     <div className="app">
-      {screen === SCREENS.HOME && <HomeScreen myName={myName} setMyName={setMyName} myToken={myToken} setMyToken={setMyToken} connected={connected} error={error} setError={setError} onCreate={createRoom} onJoin={joinRoom} roomPlayers={roomPlayers} />}
+      {screen === SCREENS.HOME && (
+        <HomeScreen
+          myName={myName} setMyName={setMyName}
+          myToken={myToken} setMyToken={setMyToken}
+          connected={connected}
+          error={error} setError={setError}
+          onCreate={createRoom} onJoin={joinRoom}
+          roomPlayers={roomPlayers}
+          initialJoinCode={initialJoinCode}
+        />
+      )}
       {screen === SCREENS.LOBBY && <LobbyScreen code={roomCode} players={lobbyPlayers} isHost={isHost} onStart={startGame} myId={myId} shareLink={shareLink} myToken={myToken} setMyToken={setMyToken} />}
       {screen === SCREENS.GAME && gameState && (
         <GameScreen
@@ -245,9 +263,17 @@ export default function App() {
 }
 
 // ═══ HOME ═══════════════════════════════════════
-function HomeScreen({ myName, setMyName, myToken, setMyToken, connected, error, setError, onCreate, onJoin, roomPlayers = [] }) {
-  const [joinCode, setJoinCode] = useState('');
-  const [tab, setTab] = useState('create');
+function HomeScreen({ myName, setMyName, myToken, setMyToken, connected, error, setError, onCreate, onJoin, roomPlayers = [], initialJoinCode = '' }) {
+  const [joinCode, setJoinCode] = useState(initialJoinCode);
+  const [tab, setTab] = useState(initialJoinCode ? 'join' : 'create');
+
+  useEffect(() => {
+    if (initialJoinCode) {
+      setJoinCode(initialJoinCode);
+      setTab('join');
+    }
+  }, [initialJoinCode]);
+
   const [rounds, setRounds] = useState(0);
   const [netWorth, setNetWorth] = useState(0);
   return (
