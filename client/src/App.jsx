@@ -36,32 +36,48 @@ function getCellPos(idx) {
 }
 
 // ─── SEQUENTIAL ANIMATION MANAGER ────────────────
-// Phases: idle → rolling (die spins) → moving (pawn hops) → done
+// Strictly sequential: roll die (2s) → show total (0.8s pause) → pawn hops → idle
 function useAnimationSequence() {
-  const [phase, setPhase] = useState('idle'); // idle | rolling | moving | done
+  const [phase, setPhase] = useState('idle');
+  // dieDisplay is what shows on the die face during animation
   const [dieDisplay, setDieDisplay] = useState(2);
-  const [animPos, setAnimPos] = useState({});   // playerId → current display position
-  const animRef = useRef(null);
+  // finalTotal is the settled value shown after roll stops — only set when roll is done
+  const [finalTotal, setFinalTotal] = useState(null);
+  const [animPos, setAnimPos] = useState({});
+  const timerRef = useRef([]);
 
-  function startRoll(targetTotal) {
-    // Phase 1: Die rolling animation (~800ms)
+  function clearAll() {
+    timerRef.current.forEach(id => clearInterval(id));
+    timerRef.current = [];
+  }
+
+  // Phase 1: Die tumbles for ~2 seconds, then settles on target
+  function startRoll(targetTotal, onRollDone) {
+    clearAll();
+    setFinalTotal(null);
     setPhase('rolling');
     let ticks = 0;
-    const maxTicks = 14;
+    const maxTicks = 22; // ~2s at 90ms each
     const iv = setInterval(() => {
       setDieDisplay(Math.ceil(Math.random() * 12));
       ticks++;
       if (ticks >= maxTicks) {
         clearInterval(iv);
         setDieDisplay(targetTotal);
-        setPhase('done-rolling'); // signal ready for move phase
+        setFinalTotal(targetTotal);
+        setPhase('show-total');
+        // Phase 2: Show the settled total for 900ms before moving pawn
+        const pause = setTimeout(() => {
+          onRollDone();
+        }, 900);
+        timerRef.current.push(pause);
       }
-    }, 55);
-    animRef.current = iv;
+    }, 90);
+    timerRef.current.push(iv);
   }
 
+  // Phase 3: Pawn hops one tile per 320ms — slow and visible
   function startMove(playerId, fromPos, toPos, onComplete) {
-    // Phase 2: Pawn hops one tile at a time
     setPhase('moving');
     const steps = [];
     let p = fromPos;
@@ -73,20 +89,26 @@ function useAnimationSequence() {
       i++;
       if (i >= steps.length) {
         clearInterval(iv);
-        setPhase('idle');
-        onComplete?.();
+        // Brief pause at landing before applying final state
+        const pause = setTimeout(() => {
+          setPhase('idle');
+          onComplete?.();
+        }, 400);
+        timerRef.current.push(pause);
       }
-    }, 200);
-    animRef.current = iv;
+    }, 320);
+    timerRef.current.push(iv);
   }
 
   function reset() {
-    if (animRef.current) clearInterval(animRef.current);
+    clearAll();
     setPhase('idle');
     setAnimPos({});
+    setDieDisplay(2);
+    setFinalTotal(null);
   }
 
-  return { phase, setPhase, dieDisplay, setDieDisplay, animPos, setAnimPos, startRoll, startMove, reset };
+  return { phase, dieDisplay, finalTotal, animPos, startRoll, startMove, reset };
 }
 
 export default function App() {
@@ -109,10 +131,9 @@ export default function App() {
   const [roomPlayers, setRoomPlayers] = useState([]);
 
   const anim = useAnimationSequence();
-  // Track previous positions to know who moved
-  const prevPositions = useRef({});
-  // Pending state update waiting for animation to finish
   const pendingState = useRef(null);
+  // track who is currently rolling so we know whether to show overlay
+  const [rollingPlayerId, setRollingPlayerId] = useState(null);
 
   useEffect(() => {
     on('created', (msg) => { setMyId(msg.playerId); setRoomCode(msg.code); setIsHost(true); setShareLink(`${window.location.origin}?join=${msg.code}`); setScreen(SCREENS.LOBBY); });
@@ -124,8 +145,7 @@ export default function App() {
       setScreen(SCREENS.GAME);
 
       setGameState(prev => {
-        if (!prev) { // first state — no animation needed
-          msg.state.players.forEach(p => { prevPositions.current[p.id] = p.pos; });
+        if (!prev) {
           return msg.state;
         }
 
@@ -137,28 +157,27 @@ export default function App() {
         });
 
         if (moverId === null) {
-          // No movement — just update state immediately
           return msg.state;
         }
 
-        // Store pending state, start die roll then pawn walk
+        // Store final state, begin animation sequence
         pendingState.current = msg.state;
         const total = msg.state.dice[0] + msg.state.dice[1];
 
-        // Phase 1: Roll die
-        anim.startRoll(total);
+        // Track who is rolling (for overlay decision)
+        setRollingPlayerId(moverId);
 
-        // After roll animation finishes, start pawn walk
-        setTimeout(() => {
+        anim.startRoll(total, () => {
+          // Roll done — now walk the pawn
           anim.startMove(moverId, fromPos, toPos, () => {
-            // Phase 3: Apply real state after pawn lands
+            // Pawn landed — now apply real state
+            setRollingPlayerId(null);
             setGameState(pendingState.current);
-            msg.state.players.forEach(p => { prevPositions.current[p.id] = p.pos; });
             pendingState.current = null;
           });
-        }, 14 * 55 + 100); // wait for die roll to complete
+        });
 
-        return prev; // keep old state during animation
+        return prev; // hold old state during animation
       });
     });
     on('error', (msg) => {
@@ -187,13 +206,21 @@ export default function App() {
   const myPlayer = gameState?.players.find(p => p.id === myId);
   const currentPlayer = gameState?.players[gameState?.currentIdx];
   const isMyTurn = currentPlayer?.id === myId;
+  // Only show full-screen overlay to the player who is rolling
+  const iAmRolling = rollingPlayerId === myId;
 
   return (
     <div className="app">
       {screen === SCREENS.HOME && <HomeScreen myName={myName} setMyName={setMyName} myToken={myToken} setMyToken={setMyToken} connected={connected} error={error} setError={setError} onCreate={createRoom} onJoin={joinRoom} roomPlayers={roomPlayers} />}
       {screen === SCREENS.LOBBY && <LobbyScreen code={roomCode} players={lobbyPlayers} isHost={isHost} onStart={startGame} myId={myId} shareLink={shareLink} myToken={myToken} setMyToken={setMyToken} />}
       {screen === SCREENS.GAME && gameState && (
-        <GameScreen state={gameState} serverPlayers={serverPlayers} myId={myId} myPlayer={myPlayer} isMyTurn={isMyTurn} dispatch={dispatch} modal={modal} setModal={setModal} anim={anim} />
+        <GameScreen
+          state={gameState} serverPlayers={serverPlayers}
+          myId={myId} myPlayer={myPlayer}
+          isMyTurn={isMyTurn} dispatch={dispatch}
+          modal={modal} setModal={setModal}
+          anim={anim} iAmRolling={iAmRolling}
+        />
       )}
       {screen === SCREENS.WIN && gameState && <WinScreen state={gameState} onRestart={() => { setScreen(SCREENS.HOME); setGameState(null); anim.reset(); }} />}
       {toast && <Toast msg={toast.msg} type={toast.type} />}
@@ -250,7 +277,6 @@ function LobbyScreen({ code, players, isHost, onStart, myId, shareLink, myToken,
   }, [players, myId, myToken]);
 
   const takenTokens = players.filter(p => p.id !== myId).map(p => p.token);
-
   function copyCode() { navigator.clipboard?.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 2000); }
   function copyLink() { navigator.clipboard?.writeText(shareLink); setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); }
 
@@ -259,11 +285,11 @@ function LobbyScreen({ code, players, isHost, onStart, myId, shareLink, myToken,
       {showTokenPicker && (
         <div className="modal-overlay">
           <div className="modal-box">
-            <h3 style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 22, letterSpacing: 3, color: 'var(--accent)', marginBottom: 10 }}>Token Already Taken!</h3>
-            <p style={{ fontSize: 14, color: 'var(--text2)', marginBottom: 14 }}>Another player has {myToken}. Pick a different one:</p>
-            <div className="token-grid" style={{ marginBottom: 16 }}>
+            <h3 style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, letterSpacing:3, color:'var(--accent)', marginBottom:10 }}>Token Already Taken!</h3>
+            <p style={{ fontSize:14, color:'var(--text2)', marginBottom:14 }}>Another player has {myToken}. Pick a different one:</p>
+            <div className="token-grid" style={{ marginBottom:16 }}>
               {TOKENS.map(t => (
-                <button key={t} className={`token-btn ${myToken === t ? 'active' : ''} ${takenTokens.includes(t) ? 'taken' : ''}`}
+                <button key={t} className={`token-btn ${myToken===t?'active':''} ${takenTokens.includes(t)?'taken':''}`}
                   disabled={takenTokens.includes(t)}
                   onClick={() => { if (!takenTokens.includes(t)) { setMyToken(t); setShowTokenPicker(false); } }}>{t}</button>
               ))}
@@ -273,123 +299,133 @@ function LobbyScreen({ code, players, isHost, onStart, myId, shareLink, myToken,
       )}
       <div className="lobby-header">
         <div className="lobby-title">Game Lobby</div>
-        <div className="room-code-display" onClick={copyCode}><span className="code-label">ROOM CODE</span><span className="code-value">{code}</span><span className="code-copy">{copied ? '✓' : '⎘'}</span></div>
-        {shareLink && <div className="share-link-display" onClick={copyLink}><span className="link-label">SHARE LINK</span><span className="link-value">{shareLink.substring(0, 38)}…</span><span className="link-copy">{linkCopied ? '✓' : '⎘'}</span></div>}
+        <div className="room-code-display" onClick={copyCode}><span className="code-label">ROOM CODE</span><span className="code-value">{code}</span><span className="code-copy">{copied?'✓':'⎘'}</span></div>
+        {shareLink && <div className="share-link-display" onClick={copyLink}><span className="link-label">SHARE LINK</span><span className="link-value">{shareLink.substring(0,38)}…</span><span className="link-copy">{linkCopied?'✓':'⎘'}</span></div>}
         <p className="lobby-hint">Share this code with friends anywhere!</p>
       </div>
       <div className="lobby-players">
-        {players.map((p, i) => (
-          <div key={p.id} className={`lobby-player ${p.id === myId ? 'me' : ''}`}>
+        {players.map((p,i) => (
+          <div key={p.id} className={`lobby-player ${p.id===myId?'me':''}`}>
             <span className="lp-tok">{p.token}</span>
-            <span className="lp-name" style={{ color: PLAYER_COLORS[i % 8] }}>{p.name}</span>
-            {p.id === myId && <span className="lp-badge">You</span>}
-            {i === 0 && <span className="lp-badge host">Host</span>}
+            <span className="lp-name" style={{ color:PLAYER_COLORS[i%8] }}>{p.name}</span>
+            {p.id===myId && <span className="lp-badge">You</span>}
+            {i===0 && <span className="lp-badge host">Host</span>}
           </div>
         ))}
-        {Array.from({ length: Math.max(0, 2 - players.length) }).map((_, i) => (
+        {Array.from({ length:Math.max(0,2-players.length) }).map((_,i) => (
           <div key={`e${i}`} className="lobby-player empty"><span className="lp-tok">⏳</span><span className="lp-name">Waiting for player…</span></div>
         ))}
       </div>
       {isHost
-        ? <div className="lobby-footer"><p className="lobby-min">{players.length < 2 ? 'Need at least 2 players' : `${players.length} players ready`}</p><button className="btn-primary" onClick={onStart} disabled={players.length < 2}>🚀 Start Game</button></div>
+        ? <div className="lobby-footer"><p className="lobby-min">{players.length<2?'Need at least 2 players':`${players.length} players ready`}</p><button className="btn-primary" onClick={onStart} disabled={players.length<2}>🚀 Start Game</button></div>
         : <div className="lobby-footer"><p className="lobby-min">Waiting for host to start…</p></div>}
     </div>
   );
 }
 
 // ═══ GAME SCREEN ════════════════════════════════
-function GameScreen({ state, serverPlayers, myId, myPlayer, isMyTurn, dispatch, modal, setModal, anim }) {
+function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal, anim, iAmRolling }) {
   const [activeTab, setActiveTab] = useState('board');
   const currentP = state.players[state.currentIdx];
   const isMe = currentP?.id === myId;
-  const isAnimating = anim.phase === 'rolling' || anim.phase === 'moving' || anim.phase === 'done-rolling';
+  const isAnimating = anim.phase !== 'idle';
 
   return (
     <div className="game-screen">
-      {/* TOP BAR */}
       <div className="game-topbar">
         <div className="turn-info">
           <span className="ti-tok">{currentP?.token}</span>
           <div>
-            <div className="ti-name" style={{ color: currentP?.color }}>{currentP?.name}</div>
+            <div className="ti-name" style={{ color:currentP?.color }}>{currentP?.name}</div>
             <div className="ti-phase">{phaseLabel(state, isMe)}</div>
           </div>
         </div>
-        <SingleDie value={anim.dieDisplay} phase={anim.phase} total={state.dice[0] + state.dice[1]} />
+        {/* Corner die — always visible, shows dots, only animates for the roller */}
+        <CornerDie value={anim.dieDisplay} isRolling={anim.phase === 'rolling'} lastTotal={state.dice[0] + state.dice[1]} phase={anim.phase} />
       </div>
 
-      {/* PLAYER STRIP */}
       <div className="player-strip">
         {state.players.map(p => (
-          <div key={p.id} className={`ps-player ${p.id === state.players[state.currentIdx].id ? 'active' : ''} ${p.bankrupt ? 'bankrupt' : ''}`}>
+          <div key={p.id} className={`ps-player ${p.id===state.players[state.currentIdx].id?'active':''} ${p.bankrupt?'bankrupt':''}`}>
             <span>{p.token}</span><span className="ps-cash">${p.cash}</span>
           </div>
         ))}
       </div>
 
-      {/* TABS */}
       <div className="tab-bar">
         {['board','props','log'].map(t => (
-          <button key={t} className={`tbar-btn ${activeTab === t ? 'active' : ''}`} onClick={() => setActiveTab(t)}>
-            {t === 'board' ? '🗺 Board' : t === 'props' ? '🏠 Props' : '📋 Log'}
+          <button key={t} className={`tbar-btn ${activeTab===t?'active':''}`} onClick={() => setActiveTab(t)}>
+            {t==='board'?'🗺 Board':t==='props'?'🏠 Props':'📋 Log'}
           </button>
         ))}
       </div>
 
       <div className="content-area">
-        {activeTab === 'board' && <MobileBoard state={state} myId={myId} setModal={setModal} animPos={anim.animPos} />}
-        {activeTab === 'props' && <PropertiesView state={state} myId={myId} />}
-        {activeTab === 'log'   && <LogView log={state.log} />}
+        {activeTab==='board' && <MobileBoard state={state} myId={myId} setModal={setModal} animPos={anim.animPos} />}
+        {activeTab==='props' && <PropertiesView state={state} myId={myId} />}
+        {activeTab==='log'   && <LogView log={state.log} />}
       </div>
 
-      {/* DICE ROLL OVERLAY — shown during roll phase */}
-      {(anim.phase === 'rolling' || anim.phase === 'done-rolling') && (
+      {/* Full-screen roll overlay — ONLY for the player who just rolled */}
+      {iAmRolling && (anim.phase==='rolling' || anim.phase==='show-total') && (
         <div className="dice-overlay">
-          <DiceOverlay value={anim.dieDisplay} phase={anim.phase} />
+          <DiceOverlay value={anim.dieDisplay} phase={anim.phase} finalTotal={anim.finalTotal} />
         </div>
       )}
 
-      {/* ACTION BAR */}
+      {/* Action bar — hidden while animating */}
       {isMyTurn && myPlayer && !isAnimating && (
         <ActionBar state={state} myPlayer={myPlayer} dispatch={dispatch} setModal={setModal} />
       )}
 
       {modal && <ModalOverlay onClose={() => setModal(null)}>{modal}</ModalOverlay>}
-      {isMyTurn && state.phase === 'card'  && state.pendingCard    && <CardModal card={state.pendingCard} onAck={() => dispatch('ack_card')} />}
-      {isMyTurn && state.phase === 'rent'  && state.pendingRent    && <RentModal state={state} rent={state.pendingRent} onPay={() => dispatch('pay_rent')} />}
-      {isMyTurn && state.phase === 'buy'   && <BuyModal state={state} player={myPlayer} onBuy={() => dispatch('buy')} onPass={() => dispatch('pass_buy')} />}
-      {state.phase === 'auction' && state.pendingAuction && <AuctionModal state={state} myId={myId} onBid={amount => dispatch('bid', { amount })} />}
-      {state.tradeOffer && state.tradeOffer.toId === myId && <TradeOfferModal state={state} trade={state.tradeOffer} onAccept={() => dispatch('trade_accept')} onDecline={() => dispatch('trade_decline')} />}
+      {isMyTurn && state.phase==='card' && state.pendingCard && <CardModal card={state.pendingCard} onAck={() => dispatch('ack_card')} />}
+      {isMyTurn && state.phase==='rent' && state.pendingRent && <RentModal state={state} rent={state.pendingRent} onPay={() => dispatch('pay_rent')} />}
+      {isMyTurn && state.phase==='buy' && <BuyModal state={state} player={myPlayer} onBuy={() => dispatch('buy')} onPass={() => dispatch('pass_buy')} />}
+      {state.phase==='auction' && state.pendingAuction && <AuctionModal state={state} myId={myId} onBid={amount => dispatch('bid',{amount})} />}
+      {state.tradeOffer && state.tradeOffer.toId===myId && <TradeOfferModal state={state} trade={state.tradeOffer} onAccept={() => dispatch('trade_accept')} onDecline={() => dispatch('trade_decline')} />}
     </div>
   );
 }
 
 function phaseLabel(state, isMe) {
   if (!isMe) return `${state.players[state.currentIdx]?.name}'s turn`;
-  const labels = { roll: 'Your turn — Roll!', buy: 'Buy or Pass?', card: 'Draw a card', rent: 'Pay rent', auction: 'Auction!', end: 'End turn', won: 'Game over' };
+  const labels = { roll:'Your turn — Roll!', buy:'Buy or Pass?', card:'Draw a card', rent:'Pay rent', auction:'Auction!', end:'End turn', won:'Game over' };
   return labels[state.phase] || 'Your turn';
 }
 
-// ═══ SINGLE DIE (top bar) ═══════════════════════
-function SingleDie({ value, phase, total }) {
-  const dots = getDotPattern(Math.min(Math.max(value, 1), 12));
-  const isRolling = phase === 'rolling';
+// ═══ CORNER DIE (top-right, always visible) ══════
+// Shows dots. Wiggles only during rolling phase.
+// Shows settled number next to it — no NaN: only shows after a real roll has happened.
+function CornerDie({ value, isRolling, lastTotal, phase }) {
+  const safeVal = (value && !isNaN(value)) ? Math.min(Math.max(value, 1), 12) : null;
+  const dots = safeVal ? getDotPattern(safeVal) : getDotPattern(1);
+  // Only show the numeric total when a roll has actually settled
+  const showTotal = phase === 'show-total' || phase === 'moving' || phase === 'idle';
+  const displayTotal = (lastTotal && !isNaN(lastTotal) && lastTotal > 0) ? lastTotal : null;
+
   return (
-    <div className="single-die-wrap">
-      <div className={`single-die-face ${isRolling ? 'rolling' : ''}`}>
-        <div className="die-dots-grid">
-          {dots.map((on, i) => <span key={i} className={`die-dot ${on ? 'on' : ''}`} />)}
+    <div className="corner-die-wrap">
+      <div className={`corner-die-face ${isRolling ? 'corner-rolling' : ''}`}>
+        <div className="corner-die-dots">
+          {dots.map((on, i) => <span key={i} className={`corner-dot ${on ? 'on' : ''}`} />)}
         </div>
       </div>
-      <div className="die-total-label">{value}</div>
+      {showTotal && displayTotal && (
+        <div className="corner-die-total">{displayTotal}</div>
+      )}
     </div>
   );
 }
 
-// ═══ DICE OVERLAY (full-screen during roll) ══════
-function DiceOverlay({ value, phase }) {
-  const dots = getDotPattern(Math.min(Math.max(value, 1), 12));
+// ═══ FULL-SCREEN DICE OVERLAY (only for roller) ══
+function DiceOverlay({ value, phase, finalTotal }) {
+  const safeVal = (value && !isNaN(value)) ? Math.min(Math.max(value, 1), 12) : 1;
+  const dots = getDotPattern(safeVal);
   const isRolling = phase === 'rolling';
+  const isSettled = phase === 'show-total';
+  const displayNumber = isSettled && finalTotal ? finalTotal : (isRolling ? null : safeVal);
+
   return (
     <div className="dice-overlay-inner">
       <div className={`overlay-die-face ${isRolling ? 'spinning' : 'landing'}`}>
@@ -397,8 +433,12 @@ function DiceOverlay({ value, phase }) {
           {dots.map((on, i) => <span key={i} className={`overlay-dot ${on ? 'on' : ''}`} />)}
         </div>
       </div>
-      <div className="overlay-total">{value}</div>
-      {!isRolling && <div className="overlay-subtitle">You rolled {value}!</div>}
+      {isSettled && finalTotal && (
+        <>
+          <div className="overlay-total">{finalTotal}</div>
+          <div className="overlay-subtitle">You rolled {finalTotal}!</div>
+        </>
+      )}
     </div>
   );
 }
@@ -418,7 +458,7 @@ function getDotPattern(val) {
     11: [1,1,1, 1,1,1, 1,1,0],
     12: [1,1,1, 1,1,1, 1,1,1],
   };
-  return (p[val] || p[6]).map(v => v === 1);
+  return (p[val] || p[6]).map(v => v===1);
 }
 
 // ═══ MOBILE BOARD ═══════════════════════════════
@@ -442,27 +482,27 @@ function MobileBoard({ state, myId, setModal, animPos }) {
   return (
     <div className="board-container">
       <div className="board-scroll">
-        <div className="board-grid" style={{ width: totalSize, height: totalSize, position: 'relative' }}>
+        <div className="board-grid" style={{ width:totalSize, height:totalSize, position:'relative' }}>
           {state.board.map((cell, i) => {
             const pos = getCellPos(i);
-            const owner = cell.owner != null ? state.players.find(p => p.id === cell.owner) : null;
+            const owner = cell.owner != null ? state.players.find(p => p.id===cell.owner) : null;
             const pawns = pawnsByPos[i] || [];
             const isCorner = [0,10,20,30].includes(i);
             const gc = cell.group ? COLOR_GROUPS[cell.group] : null;
             return (
-              <div key={i} className={`board-cell ${isCorner ? 'corner' : ''}`}
-                style={{ position:'absolute', left: pos.col*size, top: pos.row*size, width:size, height:size,
+              <div key={i} className={`board-cell ${isCorner?'corner':''}`}
+                style={{ position:'absolute', left:pos.col*size, top:pos.row*size, width:size, height:size,
                   borderColor: owner ? owner.color+'aa' : 'rgba(0,0,0,0.12)',
                   borderWidth: owner ? 2 : 1,
                   background: gc ? gc.color+'22' : isCorner ? '#e8e0d0' : '#fefdfb' }}
                 onClick={() => showCellModal(cell, state, setModal)}>
-                {gc && <div className="cell-stripe" style={{ background: gc.color }} />}
+                {gc && <div className="cell-stripe" style={{ background:gc.color }} />}
                 {isCorner
                   ? <span className="corner-icon">{cell.icon}</span>
-                  : <span className="cell-lbl">{cell.name.split('\n')[0].substring(0, 12)}</span>}
+                  : <span className="cell-lbl">{cell.name.split('\n')[0].substring(0,12)}</span>}
                 {cell.mortgaged && <span className="mort-badge">M</span>}
-                {(cell.houses||0) > 0 && <span className="house-badge">{cell.houses===5?'🏨':'🏠'.repeat(cell.houses)}</span>}
-                {pawns.length > 0 && (
+                {(cell.houses||0)>0 && <span className="house-badge">{cell.houses===5?'🏨':'🏠'.repeat(cell.houses)}</span>}
+                {pawns.length>0 && (
                   <div className="pawn-cluster">
                     {pawns.map(p => <span key={p.id} className="board-pawn pawn-hop">{p.token}</span>)}
                   </div>
@@ -472,7 +512,7 @@ function MobileBoard({ state, myId, setModal, animPos }) {
           })}
           <div className="board-center" style={{ left:size, top:size, width:size*9, height:size*9 }}>
             <div className="bc-logo">METRO MAGNATE</div>
-            {state.freeParking > 0 && <div className="bc-pot">🅿️ ${state.freeParking}</div>}
+            {state.freeParking>0 && <div className="bc-pot">🅿️ ${state.freeParking}</div>}
           </div>
         </div>
       </div>
@@ -481,74 +521,76 @@ function MobileBoard({ state, myId, setModal, animPos }) {
 }
 
 function showCellModal(cell, state, setModal) {
-  const owner = cell.owner != null ? state.players.find(p => p.id === cell.owner) : null;
+  const owner = cell.owner != null ? state.players.find(p => p.id===cell.owner) : null;
   const gc = cell.group ? COLOR_GROUPS[cell.group] : null;
   setModal(
     <div className="cell-info-modal">
-      {gc && <div className="cim-stripe" style={{ background: gc.color }} />}
+      {gc && <div className="cim-stripe" style={{ background:gc.color }} />}
       <h3 className="cim-name">{cell.name}</h3>
-      {cell.type === 'property' && (<>
-        <div className="cim-group" style={{ color: gc?.color }}>{gc?.name} Group · ${cell.price}</div>
+      {cell.type==='property' && (<>
+        <div className="cim-group" style={{ color:gc?.color }}>{gc?.name} Group · ${cell.price}</div>
         <div className="cim-rents">
           {['0 houses','1 house','2 houses','3 houses','4 houses','Hotel'].map((l,i) => <div key={i} className="cim-row"><span>{l}</span><span>${cell.rent[i]}</span></div>)}
           <div className="cim-row"><span>Build cost</span><span>${gc?.houseCost}</span></div>
         </div>
       </>)}
-      {cell.type === 'railroad' && <div className="cim-rents">{[1,2,3,4].map((n,i) => <div key={i} className="cim-row"><span>{n} railroad{n>1?'s':''}</span><span>${cell.rent[i]}</span></div>)}</div>}
-      {cell.type === 'utility' && <p className="cim-desc">Rent = 4× or 10× dice roll.</p>}
-      {owner && <div className="cim-owner" style={{ color: owner.color }}>{owner.token} Owned by {owner.name}{cell.mortgaged&&' (Mortgaged)'}{(cell.houses||0)>0&&` · ${cell.houses===5?'🏨 Hotel':'🏠'.repeat(cell.houses)}`}</div>}
+      {cell.type==='railroad' && <div className="cim-rents">{[1,2,3,4].map((n,i) => <div key={i} className="cim-row"><span>{n} railroad{n>1?'s':''}</span><span>${cell.rent[i]}</span></div>)}</div>}
+      {cell.type==='utility' && <p className="cim-desc">Rent = 4× or 10× dice roll.</p>}
+      {owner && <div className="cim-owner" style={{ color:owner.color }}>{owner.token} Owned by {owner.name}{cell.mortgaged&&' (Mortgaged)'}{(cell.houses||0)>0&&` · ${cell.houses===5?'🏨 Hotel':'🏠'.repeat(cell.houses)}`}</div>}
       {!owner && cell.price && <div className="cim-owner">Unowned · ${cell.price}</div>}
     </div>
   );
 }
 
-// ═══ ACTION BAR — redesigned per reference image ═
+// ═══ ACTION BAR ════════════════════════════════
+// Big prominent button: ROLL when canRoll, END TURN when canEnd
 function ActionBar({ state, myPlayer, dispatch, setModal }) {
   const [showBuild, setShowBuild] = useState(false);
   const [showTrade, setShowTrade] = useState(false);
   const [showMort,  setShowMort]  = useState(false);
   const phase = state.phase;
   const canRoll = !state.rollDone;
-  const canEnd  = state.rollDone && (phase === 'end' || phase === 'roll');
+  const canEnd  = state.rollDone && (phase==='end' || phase==='roll');
 
   const buildable = myPlayer.properties.map(idx => state.board[idx])
     .filter(c => c.type==='property' && c.group &&
-      GROUP_CELLS[c.group]?.every(i => state.board[i].owner === myPlayer.id) &&
-      (c.houses||0) < 5 && myPlayer.cash >= COLOR_GROUPS[c.group].houseCost);
+      GROUP_CELLS[c.group]?.every(i => state.board[i].owner===myPlayer.id) &&
+      (c.houses||0)<5 && myPlayer.cash>=COLOR_GROUPS[c.group].houseCost);
 
   return (
     <div className="action-bar">
-      {/* Big ROLL button prominent at top */}
-      <button
-        className={`roll-big-btn ${canRoll ? 'active' : 'dimmed'}`}
-        disabled={!canRoll}
-        onClick={() => dispatch('roll')}
-      >
-        <span className="roll-icon">🎲</span>
-        <span className="roll-label">ROLL</span>
-      </button>
+      {/* Primary action: Roll OR End Turn — whichever is the current action */}
+      {canRoll && (
+        <button className="primary-action-btn roll-active" onClick={() => dispatch('roll')}>
+          <span className="pa-icon">🎲</span>
+          <span className="pa-label">ROLL DICE</span>
+        </button>
+      )}
+      {canEnd && (
+        <button className="primary-action-btn end-active" onClick={() => dispatch('end_turn')}>
+          <span className="pa-icon">⏭</span>
+          <span className="pa-label">END TURN</span>
+        </button>
+      )}
+      {!canRoll && !canEnd && (
+        <div className="primary-action-btn waiting">
+          <span className="pa-icon">⌛</span>
+          <span className="pa-label">WAITING…</span>
+        </div>
+      )}
 
-      {/* Secondary action pills row */}
+      {/* Secondary pills */}
       <div className="action-pills">
-        <button className="pill-btn" onClick={() => setShowBuild(true)} disabled={buildable.length===0}>
-          <span>🏗</span><span>Build</span>
-        </button>
-        <button className="pill-btn" onClick={() => setShowTrade(true)}>
-          <span>⇄</span><span>Trade</span>
-        </button>
-        <button className="pill-btn" onClick={() => setShowMort(true)}>
-          <span>🏦</span><span>Mortgage</span>
-        </button>
-        {myPlayer.inJail && myPlayer.jailFreeCards > 0 && (
+        <button className="pill-btn" onClick={() => setShowBuild(true)} disabled={buildable.length===0}><span>🏗</span><span>Build</span></button>
+        <button className="pill-btn" onClick={() => setShowTrade(true)}><span>⇄</span><span>Trade</span></button>
+        <button className="pill-btn" onClick={() => setShowMort(true)}><span>🏦</span><span>Mortgage</span></button>
+        {myPlayer.inJail && myPlayer.jailFreeCards>0 && (
           <button className="pill-btn" onClick={() => dispatch('jail_free')}><span>🃏</span><span>Jail Free</span></button>
         )}
         <button className="pill-btn danger" onClick={() => setModal(
           <ConfirmModal title="Declare Bankruptcy?" desc="All your assets will be lost."
             onYes={() => { dispatch('bankrupt'); setModal(null); }} onNo={() => setModal(null)} />
         )}><span>💀</span><span>Bankrupt</span></button>
-        <button className={`pill-btn end-btn ${canEnd ? 'active' : ''}`} disabled={!canEnd} onClick={() => dispatch('end_turn')}>
-          <span>⏭</span><span>End Turn</span>
-        </button>
       </div>
 
       {showBuild && <ModalOverlay onClose={() => setShowBuild(false)}><BuildMenu buildable={buildable} dispatch={dispatch} onClose={() => setShowBuild(false)} /></ModalOverlay>}
@@ -561,7 +603,7 @@ function ActionBar({ state, myPlayer, dispatch, setModal }) {
 function BuildMenu({ buildable, dispatch, onClose }) {
   return (
     <div className="sheet"><h3>🏗 Build Houses</h3>
-      {buildable.map(cell => { const gc = COLOR_GROUPS[cell.group]; return (
+      {buildable.map(cell => { const gc=COLOR_GROUPS[cell.group]; return (
         <button key={cell.idx} className="sheet-item" onClick={() => { dispatch('build',{cellIdx:cell.idx}); onClose(); }}>
           <div className="si-stripe" style={{background:gc.color}} /><span className="si-name">{cell.name}</span>
           <span className="si-detail">{cell.houses||0}/4 🏠 · ${gc.houseCost}</span>
@@ -576,7 +618,7 @@ function TradeMenu({ state, myPlayer, dispatch, onClose }) {
   const [wantCash,  setWantCash]  = useState(0);
   const [offerProps, setOfferProps] = useState([]);
   const [wantProps,  setWantProps]  = useState([]);
-  const others = state.players.filter(p => !p.bankrupt && p.id !== myPlayer.id);
+  const others = state.players.filter(p => !p.bankrupt && p.id!==myPlayer.id);
   const toggleProp = (arr, setArr, idx) => setArr(arr.includes(idx) ? arr.filter(i=>i!==idx) : [...arr,idx]);
 
   if (!target) return (
@@ -605,13 +647,13 @@ function MortgageMenu({ state, myPlayer, dispatch }) {
   return (
     <div className="sheet"><h3>🏦 Mortgage Manager</h3>
       {myPlayer.properties.length===0 && <p className="sheet-empty">No properties owned.</p>}
-      {myPlayer.properties.map(idx=>{const cell=state.board[idx];const mv=Math.floor(cell.price/2);const lc=Math.floor(mv*1.1);return(
+      {myPlayer.properties.map(idx => { const cell=state.board[idx]; const mv=Math.floor(cell.price/2); const lc=Math.floor(mv*1.1); return (
         <div key={idx} className="mort-row">
           <span className={`mr-name ${cell.mortgaged?'muted':''}`}>{cell.name}</span>
           {cell.mortgaged
             ? <button className="mr-btn green" onClick={()=>dispatch('unmortgage',{cellIdx:idx})}>Lift +${lc}</button>
             : <button className="mr-btn" onClick={()=>dispatch('mortgage',{cellIdx:idx})}>Mortgage +${mv}</button>}
-        </div>);})}
+        </div>); })}
     </div>
   );
 }
@@ -624,13 +666,13 @@ function PropertiesView({ state }) {
           <div className="pv-header"><span>{player.token}</span><span style={{color:player.color}}>{player.name}</span><span className="pv-cash">${player.cash}</span></div>
           {player.properties.length===0 && <div className="pv-empty">No properties</div>}
           <div className="pv-props">
-            {player.properties.map(idx=>{const cell=state.board[idx];const gc=cell.group?COLOR_GROUPS[cell.group]:null;return(
+            {player.properties.map(idx => { const cell=state.board[idx]; const gc=cell.group?COLOR_GROUPS[cell.group]:null; return (
               <div key={idx} className={`pv-prop ${cell.mortgaged?'mortgaged':''}`}>
                 {gc&&<div className="pvp-stripe" style={{background:gc.color}}/>}
                 <span className="pvp-name">{cell.name}</span>
                 {cell.houses>0&&<span className="pvp-houses">{cell.houses===5?'🏨':'🏠'.repeat(cell.houses)}</span>}
                 {cell.mortgaged&&<span className="pvp-mort">M</span>}
-              </div>);})}
+              </div>); })}
           </div>
         </div>
       ))}
@@ -643,7 +685,7 @@ function LogView({ log }) {
 }
 
 function CardModal({ card, onAck }) {
-  const isChance = card.deckType === 'chance';
+  const isChance = card.deckType==='chance';
   return <ModalOverlay><div className={`card-modal ${isChance?'chance':'chest'}`}><div className="card-type">{isChance?'❓ Chance':'📦 Community Chest'}</div><p className="card-text">{card.text}</p><button className="btn-primary" onClick={onAck}>OK</button></div></ModalOverlay>;
 }
 
@@ -666,7 +708,7 @@ function AuctionModal({ state, myId, onBid }) {
   const gc=cell.group?COLOR_GROUPS[cell.group]:null;
   const allCount=state.players.filter(p=>!p.bankrupt).length;
   const bidCount=Object.keys(state.pendingAuction.bids).length;
-  return <ModalOverlay><div className="auction-modal"><div className="am-title">🔨 Auction</div>{gc&&<div className="am-stripe" style={{background:gc.color}}/>}<div className="am-prop">{cell.name}</div><div className="am-status">{bidCount}/{allCount} bids placed</div>{myBid!==undefined?<div className="am-mybid">Your bid: ${myBid} submitted ✓<br/></div>:<><input type="number" className="input-field" min="0" max={myPlayer?.cash||0} value={bid} onChange={e=>setBid(+e.target.value)} placeholder="Your bid"/><button className="btn-primary mt-12" onClick={()=>onBid(bid)}>Submit Bid</button><button className="btn-secondary mt-8" onClick={()=>onBid(0)}>Pass</button></>}</div></ModalOverlay>;
+  return <ModalOverlay><div className="auction-modal"><div className="am-title">🔨 Auction</div>{gc&&<div className="am-stripe" style={{background:gc.color}}/>}<div className="am-prop">{cell.name}</div><div className="am-status">{bidCount}/{allCount} bids placed</div>{myBid!==undefined?<div className="am-mybid">Your bid: ${myBid} submitted ✓</div>:<><input type="number" className="input-field" min="0" max={myPlayer?.cash||0} value={bid} onChange={e=>setBid(+e.target.value)} placeholder="Your bid"/><button className="btn-primary mt-12" onClick={()=>onBid(bid)}>Submit Bid</button><button className="btn-secondary mt-8" onClick={()=>onBid(0)}>Pass</button></>}</div></ModalOverlay>;
 }
 
 function TradeOfferModal({ state, trade, onAccept, onDecline }) {
