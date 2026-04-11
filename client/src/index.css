@@ -269,10 +269,10 @@ html, body, #root { height:100%; width:100%; background:var(--bg); color:var(--t
 .board-cell:active { background:#e8dfc8; }
 .board-cell.corner { justify-content:center; background:var(--board-corner); }
 .corner-icon { font-size:18px; }
-.cell-stripe { width:100%; height:6px; flex-shrink:0; }
-.cell-lbl { font-size:4.5px; color:var(--board-text2); text-align:center; line-height:1.2; word-break:break-all; font-family:'Outfit',sans-serif; font-weight:600; padding:0 1px; }
-.mort-badge { position:absolute; top:1px; right:1px; font-size:4px; color:#c0392b; background:rgba(192,57,43,.15); border-radius:2px; padding:0 1px; font-weight:700; }
-.house-badge { font-size:4.5px; line-height:1; }
+.cell-stripe { width:100%; height:8px; flex-shrink:0; }
+.cell-lbl { font-size:8.5px; color:#111; text-align:center; line-height:1.1; word-break:break-word; font-family:'Outfit',sans-serif; font-weight:700; padding:2px 1px 0; }
+.mort-badge { position:absolute; top:1px; right:1px; font-size:4.5px; color:#c0392b; background:rgba(192,57,43,.15); border-radius:2px; padding:0 1px; font-weight:700; }
+.house-badge { font-size:6px; line-height:1; transform:translateY(-1px); }
 
 /* Pawn hop — each tile gets a nice slow bounce */
 .pawn-cluster { position:absolute; inset:0; display:flex; flex-wrap:wrap; align-items:center; justify-content:center; pointer-events:none; z-index:2; }

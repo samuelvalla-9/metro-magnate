@@ -39,64 +39,66 @@ function getCellPos(idx) {
 // Strictly sequential: roll die (2s) → show total (0.8s pause) → pawn hops → idle
 function useAnimationSequence() {
   const [phase, setPhase] = useState('idle');
-  // dieDisplay is what shows on the die face during animation
   const [dieDisplay, setDieDisplay] = useState(2);
-  // finalTotal is the settled value shown after roll stops — only set when roll is done
   const [finalTotal, setFinalTotal] = useState(null);
   const [animPos, setAnimPos] = useState({});
   const timerRef = useRef([]);
 
   function clearAll() {
     timerRef.current.forEach(id => clearInterval(id));
+    timerRef.current.forEach(id => clearTimeout(id));
     timerRef.current = [];
   }
 
-  // Phase 1: Die tumbles for ~2 seconds, then settles on target
-  function startRoll(targetTotal, onRollDone) {
+  function startSequence(playerId, fromPos, toPos, targetTotal, onComplete) {
     clearAll();
     setFinalTotal(null);
     setPhase('rolling');
+    setAnimPos(prev => ({ ...prev, [playerId]: fromPos }));
+
     let ticks = 0;
-    const maxTicks = 22; // ~2s at 90ms each
     const iv = setInterval(() => {
       setDieDisplay(Math.ceil(Math.random() * 12));
       ticks++;
-      if (ticks >= maxTicks) {
+      if (ticks >= 22) {
         clearInterval(iv);
         setDieDisplay(targetTotal);
         setFinalTotal(targetTotal);
         setPhase('show-total');
-        // Phase 2: Show the settled total for 900ms before moving pawn
+        
         const pause = setTimeout(() => {
-          onRollDone();
+          setPhase('moving');
+          const steps = [];
+          if (((toPos - fromPos + 40) % 40) > 12) {
+            // Must be a jump (Jail, Card), skip step-by-step
+            steps.push(toPos);
+          } else {
+            let p = fromPos;
+            while (p !== toPos) { p = (p + 1) % 40; steps.push(p); }
+          }
+          if (steps.length === 0) { 
+            setPhase('idle'); 
+            onComplete?.(); 
+            return; 
+          }
+          let i = 0;
+          const iv2 = setInterval(() => {
+            setAnimPos(prev => ({ ...prev, [playerId]: steps[i] }));
+            i++;
+            if (i >= steps.length) {
+              clearInterval(iv2);
+              const pause2 = setTimeout(() => {
+                setPhase('idle');
+                onComplete?.();
+              }, 400);
+              timerRef.current.push(pause2);
+            }
+          }, 320);
+          timerRef.current.push(iv2);
         }, 900);
         timerRef.current.push(pause);
       }
     }, 90);
-    timerRef.current.push(iv);
-  }
-
-  // Phase 3: Pawn hops one tile per 320ms — slow and visible
-  function startMove(playerId, fromPos, toPos, onComplete) {
-    setPhase('moving');
-    const steps = [];
-    let p = fromPos;
-    while (p !== toPos) { p = (p + 1) % 40; steps.push(p); }
-    if (steps.length === 0) { setPhase('idle'); onComplete?.(); return; }
-    let i = 0;
-    const iv = setInterval(() => {
-      setAnimPos(prev => ({ ...prev, [playerId]: steps[i] }));
-      i++;
-      if (i >= steps.length) {
-        clearInterval(iv);
-        // Brief pause at landing before applying final state
-        const pause = setTimeout(() => {
-          setPhase('idle');
-          onComplete?.();
-        }, 400);
-        timerRef.current.push(pause);
-      }
-    }, 320);
     timerRef.current.push(iv);
   }
 
@@ -108,7 +110,7 @@ function useAnimationSequence() {
     setFinalTotal(null);
   }
 
-  return { phase, dieDisplay, finalTotal, animPos, startRoll, startMove, reset };
+  return { phase, dieDisplay, finalTotal, animPos, startSequence, reset };
 }
 
 export default function App() {
@@ -145,39 +147,24 @@ export default function App() {
       setScreen(SCREENS.GAME);
 
       setGameState(prev => {
-        if (!prev) {
-          return msg.state;
-        }
+        if (!prev) return msg.state;
 
-        // Find which player moved
         let moverId = null, fromPos = null, toPos = null;
         msg.state.players.forEach(newP => {
           const oldP = prev.players.find(p => p.id === newP.id);
           if (oldP && oldP.pos !== newP.pos) { moverId = newP.id; fromPos = oldP.pos; toPos = newP.pos; }
         });
 
-        if (moverId === null) {
-          return msg.state;
+        if (moverId !== null) {
+          const total = msg.state.dice[0] + msg.state.dice[1];
+          setRollingPlayerId(moverId);
+          anim.startSequence(moverId, fromPos, toPos, total, () => {
+            setRollingPlayerId(null);
+          });
         }
 
-        // Store final state, begin animation sequence
-        pendingState.current = msg.state;
-        const total = msg.state.dice[0] + msg.state.dice[1];
-
-        // Track who is rolling (for overlay decision)
-        setRollingPlayerId(moverId);
-
-        anim.startRoll(total, () => {
-          // Roll done — now walk the pawn
-          anim.startMove(moverId, fromPos, toPos, () => {
-            // Pawn landed — now apply real state
-            setRollingPlayerId(null);
-            setGameState(pendingState.current);
-            pendingState.current = null;
-          });
-        });
-
-        return prev; // hold old state during animation
+        // Update component state immediately; MobileBoard uses animPos for visual display
+        return msg.state; 
       });
     });
     on('error', (msg) => {
@@ -494,7 +481,7 @@ function MobileBoard({ state, myId, setModal, animPos }) {
                 style={{ position:'absolute', left:pos.col*size, top:pos.row*size, width:size, height:size,
                   borderColor: owner ? owner.color+'aa' : 'rgba(0,0,0,0.12)',
                   borderWidth: owner ? 2 : 1,
-                  background: gc ? gc.color+'22' : isCorner ? '#e8e0d0' : '#fefdfb' }}
+                  background: gc ? gc.color+'80' : isCorner ? '#e8e0d0' : '#fefdfb' }}
                 onClick={() => showCellModal(cell, state, setModal)}>
                 {gc && <div className="cell-stripe" style={{ background:gc.color }} />}
                 {isCorner
