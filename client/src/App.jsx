@@ -450,31 +450,47 @@ function LobbyScreen({ code, players, isHost, onStart, myId, shareLink, myToken,
 // ═══ GAME SCREEN ════════════════════════════════
 function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal, anim, iAmRolling }) {
   const [activeTab, setActiveTab] = useState('board');
+  const [queuedNotifications, setQueuedNotifications] = useState([]);
   const [displayedNotifications, setDisplayedNotifications] = useState([]);
   const seenLogs = useRef(new Set());
   const logInitialized = useRef(false);
   const previousLogLength = useRef(0);
   const notificationTimers = useRef({});
+  const nextNotificationTimer = useRef(null);
 
   const currentP = state.players[state.currentIdx];
   const isMe = currentP?.id === myId;
   const isAnimating = anim.phase !== 'idle';
 
-  const queueNotification = (entry) => {
-    const id = entry.ts || `${Date.now()}-${Math.random()}`;
-    const note = { ...entry, id, fading: false };
-    setDisplayedNotifications(prev => [...prev, note]);
-
-    notificationTimers.current[id] = {
+  const scheduleNextNotification = useCallback((next) => {
+    setDisplayedNotifications(prev => [...prev, { ...next, fading: false }]);
+    notificationTimers.current[next.id] = {
       fade: window.setTimeout(() => {
-        setDisplayedNotifications(prev => prev.map(n => n.id === id ? { ...n, fading: true } : n));
-      }, 2000),
+        setDisplayedNotifications(prev => prev.map(n => n.id === next.id ? { ...n, fading: true } : n));
+      }, 2600),
       remove: window.setTimeout(() => {
-        setDisplayedNotifications(prev => prev.filter(n => n.id !== id));
-        delete notificationTimers.current[id];
-      }, 2500),
+        setDisplayedNotifications(prev => prev.filter(n => n.id !== next.id));
+        delete notificationTimers.current[next.id];
+      }, 3200),
     };
-  };
+  }, []);
+
+  const showNextNotification = useCallback(() => {
+    if (queuedNotifications.length === 0) return;
+    const [next, ...rest] = queuedNotifications;
+    setQueuedNotifications(rest);
+    scheduleNextNotification(next);
+  }, [queuedNotifications, scheduleNextNotification]);
+
+  useEffect(() => {
+    if (queuedNotifications.length === 0) return;
+    if (nextNotificationTimer.current) return;
+
+    nextNotificationTimer.current = window.setTimeout(() => {
+      showNextNotification();
+      nextNotificationTimer.current = null;
+    }, 420);
+  }, [queuedNotifications, showNextNotification]);
 
   useEffect(() => {
     if (!logInitialized.current) {
@@ -501,11 +517,11 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
     if (newEntries.length) {
       newEntries.forEach(entry => {
         seenLogs.current.add(entry.ts);
-        if (!isMyTurn) queueNotification(entry);
+        if (!isMyTurn) enqueueNotification(entry);
       });
     }
     previousLogLength.current = state.log.length;
-  }, [state.log, isMyTurn]);
+  }, [state.log, isMyTurn, enqueueNotification]);
 
   useEffect(() => {
     return () => {
@@ -513,6 +529,10 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
         window.clearTimeout(timer.fade);
         window.clearTimeout(timer.remove);
       });
+      if (nextNotificationTimer.current) {
+        window.clearTimeout(nextNotificationTimer.current);
+      }
+      nextNotificationTimer.current = null;
       notificationTimers.current = {};
     };
   }, []);
