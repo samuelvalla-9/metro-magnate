@@ -462,6 +462,11 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
   const isMe = currentP?.id === myId;
   const isAnimating = anim.phase !== 'idle';
 
+  const enqueueNotification = useCallback((entry) => {
+    const id = entry.ts || `${Date.now()}-${Math.random()}`;
+    setQueuedNotifications(prev => [...prev, { ...entry, id }]);
+  }, []);
+
   const scheduleNextNotification = useCallback((next) => {
     setDisplayedNotifications(prev => [...prev, { ...next, fading: false }]);
     notificationTimers.current[next.id] = {
