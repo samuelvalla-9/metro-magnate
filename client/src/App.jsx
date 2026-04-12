@@ -461,7 +461,6 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
 
   const currentP = state.players[state.currentIdx];
   const isMe = currentP?.id === myId;
-  const isMyTurn = currentP?.id === myId;
   const isAnimating = anim.phase !== 'idle';
 
   useEffect(() => {
