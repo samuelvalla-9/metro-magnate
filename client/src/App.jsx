@@ -450,9 +450,73 @@ function LobbyScreen({ code, players, isHost, onStart, myId, shareLink, myToken,
 // ═══ GAME SCREEN ════════════════════════════════
 function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal, anim, iAmRolling }) {
   const [activeTab, setActiveTab] = useState('board');
+  const [notificationQueue, setNotificationQueue] = useState([]);
+  const [currentNotification, setCurrentNotification] = useState(null);
+  const [isFading, setIsFading] = useState(false);
+  const seenLogs = useRef(new Set());
+  const logInitialized = useRef(false);
+  const previousLogLength = useRef(0);
+  const fadeTimer = useRef();
+  const displayTimer = useRef();
+
   const currentP = state.players[state.currentIdx];
   const isMe = currentP?.id === myId;
   const isAnimating = anim.phase !== 'idle';
+
+  useEffect(() => {
+    if (!logInitialized.current) {
+      state.log.forEach(entry => { if (entry?.ts != null) seenLogs.current.add(entry.ts); });
+      previousLogLength.current = state.log.length;
+      logInitialized.current = true;
+      return;
+    }
+
+    if (state.log.length < previousLogLength.current) {
+      seenLogs.current.clear();
+      state.log.forEach(entry => { if (entry?.ts != null) seenLogs.current.add(entry.ts); });
+      previousLogLength.current = state.log.length;
+      return;
+    }
+
+    const newEntries = [];
+    for (let i = state.log.length - 1; i >= 0; i--) {
+      const entry = state.log[i];
+      if (entry?.ts != null && !seenLogs.current.has(entry.ts)) {
+        newEntries.push(entry);
+      }
+    }
+    if (newEntries.length) {
+      newEntries.forEach(entry => seenLogs.current.add(entry.ts));
+      setNotificationQueue(prev => [...prev, ...newEntries]);
+    }
+    previousLogLength.current = state.log.length;
+  }, [state.log]);
+
+  useEffect(() => {
+    if (currentNotification || notificationQueue.length === 0) return;
+    const next = notificationQueue[0];
+    setCurrentNotification(next);
+    setNotificationQueue(prev => prev.slice(1));
+    setIsFading(false);
+
+    fadeTimer.current = window.setTimeout(() => setIsFading(true), 900);
+    displayTimer.current = window.setTimeout(() => {
+      setCurrentNotification(null);
+      setIsFading(false);
+    }, 1000);
+
+    return () => {
+      window.clearTimeout(fadeTimer.current);
+      window.clearTimeout(displayTimer.current);
+    };
+  }, [notificationQueue, currentNotification]);
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(fadeTimer.current);
+      window.clearTimeout(displayTimer.current);
+    };
+  }, []);
 
   return (
     <div className="game-screen">
@@ -477,6 +541,8 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
           </button>
         ))}
       </div>
+
+      <BoardNotification notification={currentNotification} hidden={iAmRolling || !currentNotification} fading={isFading} />
 
       <div className="content-area">
         {activeTab==='board' && <MobileBoard state={state} myId={myId} setModal={setModal} animPos={anim.animPos} />}
@@ -914,6 +980,17 @@ function WinScreen({ state, onRestart }) {
 
 function ModalOverlay({ children, onClose }) {
   return <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget&&onClose)onClose();}}><div className="modal-box">{onClose&&<button className="modal-close" onClick={onClose}>✕</button>}{children}</div></div>;
+}
+
+function BoardNotification({ notification, hidden, fading }) {
+  if (!notification) return null;
+  return (
+    <div className={`board-notification-container ${hidden ? 'board-notification-hidden' : ''}`}>
+      <div className={`board-notification ${notification.type || 'info'} ${fading ? 'fade-out' : 'visible'}`}>
+        <span>{notification.msg}</span>
+      </div>
+    </div>
+  );
 }
 
 function Toast({ msg, type }) { return <div className={`toast toast-${type}`}>{msg}</div>; }
