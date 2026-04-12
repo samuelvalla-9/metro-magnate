@@ -461,6 +461,7 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
 
   const currentP = state.players[state.currentIdx];
   const isMe = currentP?.id === myId;
+  const isMyTurn = currentP?.id === myId;
   const isAnimating = anim.phase !== 'idle';
 
   useEffect(() => {
@@ -487,17 +488,24 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
     }
     if (newEntries.length) {
       newEntries.forEach(entry => seenLogs.current.add(entry.ts));
-      setNotificationQueue(prev => [...prev, ...newEntries]);
+      if (!isMyTurn) {
+        setNotificationQueue(prev => [...prev, ...newEntries]);
+      }
     }
     previousLogLength.current = state.log.length;
-  }, [state.log]);
+  }, [state.log, isMyTurn]);
 
   useEffect(() => {
-    if (currentNotification || notificationQueue.length === 0) return;
-    const next = notificationQueue[0];
-    setCurrentNotification(next);
-    setNotificationQueue(prev => prev.slice(1));
-    setIsFading(false);
+    if (!currentNotification && notificationQueue.length > 0) {
+      const next = notificationQueue[0];
+      setCurrentNotification(next);
+      setNotificationQueue(prev => prev.slice(1));
+      setIsFading(false);
+    }
+  }, [notificationQueue, currentNotification]);
+
+  useEffect(() => {
+    if (!currentNotification) return;
 
     fadeTimer.current = window.setTimeout(() => setIsFading(true), 900);
     displayTimer.current = window.setTimeout(() => {
@@ -509,7 +517,7 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
       window.clearTimeout(fadeTimer.current);
       window.clearTimeout(displayTimer.current);
     };
-  }, [notificationQueue, currentNotification]);
+  }, [currentNotification]);
 
   useEffect(() => {
     return () => {
@@ -542,7 +550,7 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
         ))}
       </div>
 
-      <BoardNotification notification={currentNotification} hidden={iAmRolling || !currentNotification} fading={isFading} />
+      <BoardNotification notification={currentNotification} hidden={isMyTurn || !currentNotification} fading={isFading} />
 
       <div className="content-area">
         {activeTab==='board' && <MobileBoard state={state} myId={myId} setModal={setModal} animPos={anim.animPos} />}

@@ -107,7 +107,7 @@ html, body, #root {
 .board-notification-container {
   position: absolute;
   left: 50%;
-  top: 84px;
+  top: 112px;
   transform: translateX(-50%);
   width: 100%;
   max-width: 440px;
