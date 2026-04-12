@@ -494,7 +494,7 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
     nextNotificationTimer.current = window.setTimeout(() => {
       showNextNotification();
       nextNotificationTimer.current = null;
-    }, 420);
+    }, 900);
   }, [queuedNotifications, showNextNotification]);
 
   useEffect(() => {

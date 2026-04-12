@@ -183,14 +183,14 @@ function landOn(state, p, cell) {
     state.chanceIdx++;
     const card = state.chanceCards[cardIdx];
     state.pendingCard = { ...card, deckType: 'chance' };
-    addLog(state, `${p.token} ${p.name} drew a Chance card: ${card.text}`, 'info');
+    addLog(state, `${p.token} ${p.name} drew a Chance card`, 'info');
     state.phase = 'card';
   } else if (cell.type === 'chest') {
     const cardIdx = state.chestDeck[state.chestIdx % state.chestDeck.length];
     state.chestIdx++;
     const card = state.chestCards[cardIdx];
     state.pendingCard = { ...card, deckType: 'chest' };
-    addLog(state, `${p.token} ${p.name} drew a Community Chest card: ${card.text}`, 'info');
+    addLog(state, `${p.token} ${p.name} drew a Community Chest card`, 'info');
     state.phase = 'card';
   } else if (cell.type === 'railroad' || cell.type === 'utility' || cell.type === 'property') {
     if (cell.owner === undefined || cell.owner === null) {
