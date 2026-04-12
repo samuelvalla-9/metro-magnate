@@ -11,8 +11,16 @@
   ],
   "routes": [
     {
-      "src": "/assets/(.*)",
-      "dest": "/client/assets/$1"
+      "src": "/manifest.json",
+      "dest": "/client/manifest.json"
+    },
+    {
+      "src": "/sw.js",
+      "dest": "/client/sw.js"
+    },
+    {
+      "src": "\/(.*\\..+)",
+      "dest": "/client/$1"
     },
     {
       "src": "/(.*)",
