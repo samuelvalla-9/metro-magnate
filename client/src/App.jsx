@@ -450,18 +450,31 @@ function LobbyScreen({ code, players, isHost, onStart, myId, shareLink, myToken,
 // ═══ GAME SCREEN ════════════════════════════════
 function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal, anim, iAmRolling }) {
   const [activeTab, setActiveTab] = useState('board');
-  const [notificationQueue, setNotificationQueue] = useState([]);
-  const [currentNotification, setCurrentNotification] = useState(null);
-  const [isFading, setIsFading] = useState(false);
+  const [displayedNotifications, setDisplayedNotifications] = useState([]);
   const seenLogs = useRef(new Set());
   const logInitialized = useRef(false);
   const previousLogLength = useRef(0);
-  const fadeTimer = useRef();
-  const displayTimer = useRef();
+  const notificationTimers = useRef({});
 
   const currentP = state.players[state.currentIdx];
   const isMe = currentP?.id === myId;
   const isAnimating = anim.phase !== 'idle';
+
+  const queueNotification = (entry) => {
+    const id = entry.ts || `${Date.now()}-${Math.random()}`;
+    const note = { ...entry, id, fading: false };
+    setDisplayedNotifications(prev => [...prev, note]);
+
+    notificationTimers.current[id] = {
+      fade: window.setTimeout(() => {
+        setDisplayedNotifications(prev => prev.map(n => n.id === id ? { ...n, fading: true } : n));
+      }, 2000),
+      remove: window.setTimeout(() => {
+        setDisplayedNotifications(prev => prev.filter(n => n.id !== id));
+        delete notificationTimers.current[id];
+      }, 2500),
+    };
+  };
 
   useEffect(() => {
     if (!logInitialized.current) {
@@ -486,42 +499,21 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
       }
     }
     if (newEntries.length) {
-      newEntries.forEach(entry => seenLogs.current.add(entry.ts));
-      if (!isMyTurn) {
-        setNotificationQueue(prev => [...prev, ...newEntries]);
-      }
+      newEntries.forEach(entry => {
+        seenLogs.current.add(entry.ts);
+        if (!isMyTurn) queueNotification(entry);
+      });
     }
     previousLogLength.current = state.log.length;
   }, [state.log, isMyTurn]);
 
   useEffect(() => {
-    if (!currentNotification && notificationQueue.length > 0) {
-      const next = notificationQueue[0];
-      setCurrentNotification(next);
-      setNotificationQueue(prev => prev.slice(1));
-      setIsFading(false);
-    }
-  }, [notificationQueue, currentNotification]);
-
-  useEffect(() => {
-    if (!currentNotification) return;
-
-    fadeTimer.current = window.setTimeout(() => setIsFading(true), 900);
-    displayTimer.current = window.setTimeout(() => {
-      setCurrentNotification(null);
-      setIsFading(false);
-    }, 1000);
-
     return () => {
-      window.clearTimeout(fadeTimer.current);
-      window.clearTimeout(displayTimer.current);
-    };
-  }, [currentNotification]);
-
-  useEffect(() => {
-    return () => {
-      window.clearTimeout(fadeTimer.current);
-      window.clearTimeout(displayTimer.current);
+      Object.values(notificationTimers.current).forEach(timer => {
+        window.clearTimeout(timer.fade);
+        window.clearTimeout(timer.remove);
+      });
+      notificationTimers.current = {};
     };
   }, []);
 
@@ -549,7 +541,7 @@ function GameScreen({ state, myId, myPlayer, isMyTurn, dispatch, modal, setModal
         ))}
       </div>
 
-      <BoardNotification notification={currentNotification} hidden={isMyTurn || !currentNotification} fading={isFading} />
+      <BoardNotification notifications={displayedNotifications} hidden={isMyTurn || displayedNotifications.length === 0} />
 
       <div className="content-area">
         {activeTab==='board' && <MobileBoard state={state} myId={myId} setModal={setModal} animPos={anim.animPos} />}
@@ -989,13 +981,15 @@ function ModalOverlay({ children, onClose }) {
   return <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget&&onClose)onClose();}}><div className="modal-box">{onClose&&<button className="modal-close" onClick={onClose}>✕</button>}{children}</div></div>;
 }
 
-function BoardNotification({ notification, hidden, fading }) {
-  if (!notification) return null;
+function BoardNotification({ notifications, hidden }) {
+  if (!notifications || notifications.length === 0) return null;
   return (
     <div className={`board-notification-container ${hidden ? 'board-notification-hidden' : ''}`}>
-      <div className={`board-notification ${notification.type || 'info'} ${fading ? 'fade-out' : 'visible'}`}>
-        <span>{notification.msg}</span>
-      </div>
+      {notifications.map((notification) => (
+        <div key={notification.id} className={`board-notification ${notification.type || 'info'} ${notification.fading ? 'fade-out' : 'visible'}`}>
+          <span>{notification.msg}</span>
+        </div>
+      ))}
     </div>
   );
 }

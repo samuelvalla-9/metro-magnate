@@ -183,12 +183,14 @@ function landOn(state, p, cell) {
     state.chanceIdx++;
     const card = state.chanceCards[cardIdx];
     state.pendingCard = { ...card, deckType: 'chance' };
+    addLog(state, `${p.token} ${p.name} drew a Chance card: ${card.text}`, 'info');
     state.phase = 'card';
   } else if (cell.type === 'chest') {
     const cardIdx = state.chestDeck[state.chestIdx % state.chestDeck.length];
     state.chestIdx++;
     const card = state.chestCards[cardIdx];
     state.pendingCard = { ...card, deckType: 'chest' };
+    addLog(state, `${p.token} ${p.name} drew a Community Chest card: ${card.text}`, 'info');
     state.phase = 'card';
   } else if (cell.type === 'railroad' || cell.type === 'utility' || cell.type === 'property') {
     if (cell.owner === undefined || cell.owner === null) {
@@ -232,6 +234,8 @@ function actionAcknowledgeCard(state, playerId) {
   if (p.id !== playerId || !state.pendingCard) return { error: 'No card pending' };
   const card = state.pendingCard;
   state.pendingCard = null;
+  const cardLabel = card.deckType === 'chance' ? 'Chance card' : 'Community Chest card';
+  addLog(state, `${p.token} ${p.name} resolved ${cardLabel}: ${card.text}`, 'info');
 
   if (card.action === 'cash') {
     if (card.amount > 0) {
