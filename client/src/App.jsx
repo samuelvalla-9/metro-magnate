@@ -26,6 +26,45 @@ function useGameSocket(serverUrl) {
   return { connected, send, on };
 }
 
+// ─── PWA INSTALL HOOK ────────────────────────────
+function usePWAInstall() {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [isInstallable, setIsInstallable] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+
+  useEffect(() => {
+    const handler = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setIsInstallable(true);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+
+    // Check for iOS
+    const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+    if (isIOSDevice && !isStandalone) {
+      setIsIOS(true);
+      setIsInstallable(true);
+    }
+
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const install = async () => {
+    if (isIOS) return 'ios';
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
+      setIsInstallable(false);
+    }
+  };
+
+  return { isInstallable, isIOS, install };
+}
+
 const SCREENS = { HOME: 'home', LOBBY: 'lobby', GAME: 'game', WIN: 'win' };
 
 function getCellPos(idx, totalCells) {
@@ -139,6 +178,8 @@ export default function App() {
   const [rollingPlayerId, setRollingPlayerId] = useState(null);
   const [initialJoinCode, setInitialJoinCode] = useState('');
 
+  const pwa = usePWAInstall();
+
   // Handle URL parameters for joining
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -244,6 +285,7 @@ export default function App() {
           onCreate={createRoom} onJoin={joinRoom}
           roomPlayers={roomPlayers}
           initialJoinCode={initialJoinCode}
+          pwa={pwa}
         />
       )}
       {screen === SCREENS.LOBBY && <LobbyScreen code={roomCode} players={lobbyPlayers} isHost={isHost} onStart={startGame} myId={myId} shareLink={shareLink} myToken={myToken} setMyToken={setMyToken} />}
@@ -263,7 +305,7 @@ export default function App() {
 }
 
 // ═══ HOME ═══════════════════════════════════════
-function HomeScreen({ myName, setMyName, myToken, setMyToken, connected, error, setError, onCreate, onJoin, roomPlayers = [], initialJoinCode = '' }) {
+function HomeScreen({ myName, setMyName, myToken, setMyToken, connected, error, setError, onCreate, onJoin, roomPlayers = [], initialJoinCode = '', pwa }) {
   const [joinCode, setJoinCode] = useState(initialJoinCode);
   const [tab, setTab] = useState(initialJoinCode ? 'join' : 'create');
 
@@ -327,6 +369,23 @@ function HomeScreen({ myName, setMyName, myToken, setMyToken, connected, error, 
         </div>
         <div className="home-features"><span>2–8 Players</span><span>·</span><span>Real-time Multiplayer</span><span>·</span><span>Mobile First</span></div>
       </div>
+
+      {pwa.isInstallable && (
+        <div className="pwa-install-banner">
+          <div className="pwa-info">
+            <div className="pwa-title">{pwa.isIOS ? 'Install on iOS' : 'Metro Magnate App'}</div>
+            <div className="pwa-desc">{pwa.isIOS ? 'Add to Home Screen for best experience' : 'Install for offline access & full screen'}</div>
+          </div>
+          <button className="pwa-install-btn" onClick={async () => {
+            const res = await pwa.install();
+            if (res === 'ios') {
+              alert("To install on iOS: Tap the 'Share' icon (square with arrow) and select 'Add to Home Screen' (plus icon).");
+            }
+          }}>
+            {pwa.isIOS ? 'How to →' : 'Install Sekarang'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

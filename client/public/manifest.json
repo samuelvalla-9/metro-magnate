@@ -4,6 +4,7 @@
   "short_name": "MetroMagnate",
   "start_url": "/?mode=standalone",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "background_color": "#080c14",
   "theme_color": "#080c14",
   "orientation": "portrait",
@@ -28,5 +29,6 @@
     }
   ],
   "description": "The ultimate metropolitan board game experience.",
-  "categories": ["games", "entertainment"]
+  "categories": ["games", "entertainment"],
+  "prefer_related_applications": false
 }
