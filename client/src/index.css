@@ -528,56 +528,6 @@ html, body, #root { height:100%; width:100%; background:var(--bg); color:var(--t
 .toast-warn  { border-color:var(--accent); color:var(--accent); }
 @keyframes toastIn { from{opacity:0;transform:translateX(-50%) translateY(14px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
 
-/* ─── INSTALL BANNER ─────────────────────── */
-.install-banner {
-  width: 100%;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 10px;
-  animation: bannerSlideUp 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
-}
-@keyframes bannerSlideUp {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.install-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.install-text strong {
-  font-family: 'Bebas Neue', sans-serif;
-  font-size: 18px;
-  letter-spacing: 1.5px;
-  color: var(--accent);
-}
-.install-text span {
-  font-size: 11px;
-  color: var(--text2);
-}
-.install-btn {
-  background: var(--accent);
-  color: #000;
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 8px 16px;
-  font-family: 'Bebas Neue', sans-serif;
-  font-size: 16px;
-  letter-spacing: 1px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-.install-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(240, 180, 41, 0.3);
-}
-
 /* ─── CREATE SETTINGS ────────────────────── */
 .create-settings { display:flex; flex-direction:column; gap:10px; }
 .create-settings select.input-field { appearance:none; -webkit-appearance:none; cursor:pointer; }
